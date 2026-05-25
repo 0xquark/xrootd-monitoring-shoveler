@@ -210,6 +210,38 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 	return c
 }
 
+// PacketTypeName maps an XRootD packet-type byte to a readable label.
+func PacketTypeName(code byte) string {
+	switch code {
+	case parser.PacketTypeMap:
+		return "map"
+	case parser.PacketTypeDictID:
+		return "dict"
+	case parser.PacketTypeFStat:
+		return "fstat"
+	case parser.PacketTypeGStream:
+		return "gstream"
+	case parser.PacketTypeInfo:
+		return "info"
+	case parser.PacketTypePurg:
+		return "purge"
+	case parser.PacketTypeRedir:
+		return "redir"
+	case parser.PacketTypeTrace:
+		return "trace"
+	case parser.PacketTypeToken:
+		return "token"
+	case parser.PacketTypeUser:
+		return "user"
+	case parser.PacketTypeEAInfo:
+		return "eainfo"
+	case parser.PacketTypeXFR:
+		return "xfr"
+	default:
+		return "unknown"
+	}
+}
+
 // ProcessPacket processes a packet and returns records for all correlated file operations
 // Returns a slice of records since a packet can contain multiple file close events that each emit a record
 func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, error) {
@@ -217,6 +249,9 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 		// XML packets are not correlated
 		return nil, nil
 	}
+
+	serverIP := extractIPFromHost(extractHostFromRemoteAddr(packet.RemoteAddr))
+	packetsPerServerTotal.WithLabelValues(serverIP, PacketTypeName(packet.PacketType)).Inc()
 
 	// Calculate server ID: serverStart#addr#port
 	serverID := c.getServerID(packet)
@@ -286,6 +321,9 @@ func (c *Correlator) ProcessGStreamPacket(packet *parser.Packet) ([]map[string]i
 	if packet.GStreamRecord == nil {
 		return nil, 0, nil
 	}
+
+	serverIP := extractIPFromHost(extractHostFromRemoteAddr(packet.RemoteAddr))
+	packetsPerServerTotal.WithLabelValues(serverIP, "gstream").Inc()
 
 	gstream := packet.GStreamRecord
 	serverID := c.getServerID(packet)
