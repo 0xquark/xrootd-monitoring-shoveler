@@ -61,6 +61,13 @@ var (
 		Help: "The total number of collector records emitted",
 	})
 
+	// RecordsEmittedByServer counts correlated file-access records published per upstream
+	// server IP.
+	RecordsEmittedByServer = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_records_emitted_by_server_total",
+		Help: "Total number of collector records emitted, partitioned by upstream server IP",
+	}, []string{"server_ip"})
+
 	ParseTimeMs = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "shoveler_parse_time_ms",
 		Help:    "Packet parsing time in milliseconds",

@@ -137,6 +137,13 @@ func emitEnrichedRecord(msg collector.EnrichedRecord, output connectors.OutputCo
 // publishEnrichedRecord handles the complete publish flow for a pipeline result (metrics + output)
 func publishEnrichedRecord(msg collector.EnrichedRecord, output connectors.OutputConnector, logger *logrus.Logger) {
 	shoveler.RecordsEmitted.Inc()
+	if msg.Record != nil {
+		serverIP := msg.Record.ServerIP
+		if serverIP == "" {
+			serverIP = "unknown"
+		}
+		shoveler.RecordsEmittedByServer.WithLabelValues(serverIP).Inc()
+	}
 
 	// Calculate latency if we have timing info
 	if msg.Record != nil && msg.Record.StartTime > 0 && msg.Record.EndTime > 0 {
