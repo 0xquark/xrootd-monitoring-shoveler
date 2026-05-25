@@ -1302,3 +1302,32 @@ func TestExtractHostFromRemoteAddr_UnbracketedIPv6WithShortPort(t *testing.T) {
 	// so parser should preserve it as-is rather than truncate.
 	assert.Equal(t, addr, extractHostFromRemoteAddr(addr))
 }
+
+// TestPacketTypeName verifies that XRootD monitoring packet types are correctly mapped
+// to their corresponding string representations, including the fallback for unknown types.
+// It helps in finding missed case or typos, as the labels are hardcoded.
+func TestPacketTypeName(t *testing.T) {
+	tests := []struct {
+		code     byte
+		expected string
+	}{
+		{parser.PacketTypeMap, "map"},
+		{parser.PacketTypeDictID, "dict"},
+		{parser.PacketTypeFStat, "fstat"},
+		{parser.PacketTypeGStream, "gstream"},
+		{parser.PacketTypeInfo, "info"},
+		{parser.PacketTypePurg, "purge"},
+		{parser.PacketTypeRedir, "redir"},
+		{parser.PacketTypeTrace, "trace"},
+		{parser.PacketTypeToken, "token"},
+		{parser.PacketTypeUser, "user"},
+		{parser.PacketTypeEAInfo, "eainfo"},
+		{parser.PacketTypeXFR, "xfr"},
+		{0xFF, "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, PacketTypeName(tt.code))
+		})
+	}
+}

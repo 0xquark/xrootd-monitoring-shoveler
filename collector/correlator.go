@@ -257,7 +257,7 @@ func PacketTypeName(code byte) string {
 	case parser.PacketTypeInfo:
 		return "info"
 	case parser.PacketTypePurg:
-		return "purg"
+		return "purge"
 	case parser.PacketTypeRedir:
 		return "redir"
 	case parser.PacketTypeTrace:
