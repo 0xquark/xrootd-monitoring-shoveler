@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/opensciencegrid/xrootd-monitoring-shoveler/parser"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1301,6 +1302,81 @@ func TestExtractHostFromRemoteAddr_UnbracketedIPv6WithShortPort(t *testing.T) {
 	// Ambiguous case: full string is also a syntactically valid IPv6 literal,
 	// so parser should preserve it as-is rather than truncate.
 	assert.Equal(t, addr, extractHostFromRemoteAddr(addr))
+}
+
+// TestStandaloneCloseRecordsTotal verifies that the shoveler_standalone_close_records_total
+// counter increments exactly once for each file close that has no matching open in stateMap.
+func TestStandaloneCloseRecordsTotal(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	before := testutil.ToFloat64(standaloneCloseRecordsTotal)
+
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{
+			RecType: parser.RecTypeClose,
+			FileId:  42,
+			UserId:  7,
+		},
+		Xfr: parser.StatXFR{Read: 512},
+	}
+	closePacket := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 9000},
+		FileRecords: []interface{}{closeRec},
+	}
+
+	recs, err := correlator.ProcessPacket(closePacket)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "standalone close should still produce a record")
+	assert.Equal(t, "unknown", recs[0].Filename, "standalone close should have unknown filename")
+
+	after := testutil.ToFloat64(standaloneCloseRecordsTotal)
+	assert.Equal(t, float64(1), after-before, "counter should increment by 1 for each unmatched close")
+
+	// A second unmatched close for the same fileID should increment again.
+	recs, err = correlator.ProcessPacket(closePacket)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+
+	assert.Equal(t, float64(2), testutil.ToFloat64(standaloneCloseRecordsTotal)-before,
+		"counter should reflect all unmatched closes, not just the first")
+}
+
+// TestStandaloneCloseCounterNotIncrementedOnCorrelatedClose verifies that a
+// file close that successfully correlates with an open does NOT increment the counter.
+func TestStandaloneCloseCounterNotIncrementedOnCorrelatedClose(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	before := testutil.ToFloat64(standaloneCloseRecordsTotal)
+
+	openRec := parser.FileOpenRecord{
+		Header:   parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 55, UserId: 1},
+		FileSize: 2048,
+		Lfn:      []byte("/data/correlated.root"),
+	}
+	openPacket := &parser.Packet{
+		Header:      parser.Header{ServerStart: 5000},
+		FileRecords: []interface{}{openRec},
+	}
+	_, err := correlator.ProcessPacket(openPacket)
+	require.NoError(t, err)
+
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 55, UserId: 1},
+		Xfr:    parser.StatXFR{Read: 1024},
+	}
+	closePacket := &parser.Packet{
+		Header:      parser.Header{ServerStart: 5000},
+		FileRecords: []interface{}{closeRec},
+	}
+	recs, err := correlator.ProcessPacket(closePacket)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "/data/correlated.root", recs[0].Filename, "correlated close should have correct filename")
+
+	assert.Equal(t, before, testutil.ToFloat64(standaloneCloseRecordsTotal),
+		"correlated close must not increment the standalone counter")
 }
 
 // TestPacketTypeName verifies that XRootD monitoring packet types are correctly mapped
