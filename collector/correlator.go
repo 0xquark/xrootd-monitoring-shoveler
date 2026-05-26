@@ -752,6 +752,7 @@ func (c *Correlator) handleFileClose(rec parser.FileCloseRecord, packet *parser.
 	val, exists := c.stateMap.Get(key)
 	if !exists {
 		c.logger.Debugf("No open record found for file close: serverID=%s, fileID=%d - creating standalone record", serverID, rec.Header.FileId)
+		standaloneCloseRecordsTotal.Inc()
 		// No open record found, create a standalone close record
 		return c.createStandaloneCloseRecord(rec, packet), nil
 	}
