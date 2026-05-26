@@ -26,4 +26,14 @@ var (
 		Name: "shoveler_packets_by_server_total",
 		Help: "Total number of successfully parsed monitoring packets per upstream server IP and XRootD stream type",
 	}, []string{"server_ip", "packet_type"})
+
+	// standaloneCloseRecordsTotal counts file close records for which no matching
+	// open was found in stateMap. These records are emitted via createStandaloneCloseRecord
+	// and are degraded: they lack LFN, open-time, and full user context. A sustained
+	// rise here indicates the correlator is missing opens (e.g. due to packet loss,
+	// TTL expiry, or shoveler restart mid-session).
+	standaloneCloseRecordsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_standalone_close_records_total",
+		Help: "Total number of file close records emitted without a matching open in stateMap (degraded records missing LFN, open-time, and full user context)",
+	})
 )
