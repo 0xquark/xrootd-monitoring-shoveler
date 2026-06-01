@@ -312,6 +312,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 	for _, rec := range packet.FileRecords {
 		switch r := rec.(type) {
 		case parser.FileOpenRecord:
+			fstreamFileOpenRecordsTotal.WithLabelValues(serverIP).Inc()
 			result, err := c.handleFileOpen(r, packet, serverID)
 			if err != nil {
 				return records, err
@@ -320,6 +321,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileCloseRecord:
+			fstreamFileCloseRecordsTotal.WithLabelValues(serverIP).Inc()
 			result, err := c.handleFileClose(r, packet, serverID)
 			if err != nil {
 				return records, err
@@ -328,6 +330,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileTimeRecord:
+			fstreamFileTimeRecordsTotal.WithLabelValues(serverIP).Inc()
 			result, err := c.handleTimeRecord(r, packet, serverID)
 			if err != nil {
 				return records, err
