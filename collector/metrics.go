@@ -36,4 +36,25 @@ var (
 		Name: "shoveler_standalone_close_records_total",
 		Help: "Total number of file close records emitted without a matching open in stateMap (degraded records missing LFN, open-time, and full user context)",
 	})
+
+	// fstreamFileOpenRecordsTotal counts FileOpen records parsed from f-stream packets,
+	// broken down by upstream server IP. Each f-stream packet can carry multiple records.
+	fstreamFileOpenRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_fstream_file_open_records_total",
+		Help: "Total number of file open records received in f-stream packets per upstream server IP",
+	}, []string{"server_ip"})
+
+	// fstreamFileCloseRecordsTotal counts FileClose records parsed from f-stream packets,
+	// broken down by upstream server IP.
+	fstreamFileCloseRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_fstream_file_close_records_total",
+		Help: "Total number of file close records received in f-stream packets per upstream server IP",
+	}, []string{"server_ip"})
+
+	// fstreamFileTimeRecordsTotal counts FileTime (TOD) records parsed from f-stream packets,
+	// broken down by upstream server IP.
+	fstreamFileTimeRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_fstream_file_time_records_total",
+		Help: "Total number of file time (TOD) records received in f-stream packets per upstream server IP",
+	}, []string{"server_ip"})
 )

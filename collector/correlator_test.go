@@ -1379,6 +1379,130 @@ func TestStandaloneCloseCounterNotIncrementedOnCorrelatedClose(t *testing.T) {
 		"correlated close must not increment the standalone counter")
 }
 
+// TestFStreamFileOpenRecordsTotal verifies the fstream_file_open_records_total counter
+// increments once per FileOpen record seen in a packet's FileRecords.
+func TestFStreamFileOpenRecordsTotal(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	serverIP := "127.0.0.1"
+	before := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
+
+	openRec := parser.FileOpenRecord{
+		Header:   parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 10, UserId: 1},
+		FileSize: 1024,
+		Lfn:      []byte("/data/file.root"),
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 1000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{openRec},
+		RemoteAddr:  serverIP + ":1094",
+	}
+
+	_, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+
+	after := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
+	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file open record")
+}
+
+// TestFStreamFileCloseRecordsTotal verifies the fstream_file_close_records_total counter
+// increments once per FileClose record seen in a packet's FileRecords.
+func TestFStreamFileCloseRecordsTotal(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	serverIP := "127.0.0.2"
+	before := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
+
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 20, UserId: 1},
+		Xfr:    parser.StatXFR{Read: 512},
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 2000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{closeRec},
+		RemoteAddr:  serverIP + ":1094",
+	}
+
+	_, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+
+	after := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
+	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file close record")
+}
+
+// TestFStreamFileTimeRecordsTotal verifies the fstream_file_time_records_total counter
+// increments once per FileTime (TOD) record seen in a packet's FileRecords.
+func TestFStreamFileTimeRecordsTotal(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	serverIP := "127.0.0.3"
+	before := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+
+	timeRec := parser.FileTimeRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeTime, FileId: 30},
+		TBeg:   3000,
+		TEnd:   4000,
+		SID:    99,
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 3000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{timeRec},
+		RemoteAddr:  serverIP + ":1094",
+	}
+
+	_, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+
+	after := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file time record")
+}
+
+// TestFStreamMixedRecordsCountedIndependently verifies that a packet containing
+// multiple record types increments each counter independently.
+func TestFStreamMixedRecordsCountedIndependently(t *testing.T) {
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	serverIP := "127.0.0.4"
+	beforeOpen := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
+	beforeClose := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
+	beforeTime := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+
+	openRec := parser.FileOpenRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 50, UserId: 1},
+		Lfn:    []byte("/data/mixed.root"),
+	}
+	timeRec := parser.FileTimeRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeTime, FileId: 51},
+		TBeg:   5000,
+		TEnd:   6000,
+		SID:    77,
+	}
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 52},
+		Xfr:    parser.StatXFR{Read: 256},
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 5000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{openRec, timeRec, closeRec},
+		RemoteAddr:  serverIP + ":1094",
+	}
+
+	_, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))-beforeOpen)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))-beforeClose)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))-beforeTime)
+}
+
 // TestPacketTypeName verifies that XRootD monitoring packet types are correctly mapped
 // to their corresponding string representations, including the fallback for unknown types.
 // It helps in finding missed case or typos, as the labels are hardcoded.
