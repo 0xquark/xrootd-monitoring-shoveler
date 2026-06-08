@@ -123,7 +123,7 @@ func TestConvertToWLCG(t *testing.T) {
 		HasFileCloseMsg:        1,
 	}
 
-	wlcg, err := ConvertToWLCG(record)
+	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -259,7 +259,7 @@ func TestConvertToWLCG_WriteOperation(t *testing.T) {
 		Write:         5000000,
 	}
 
-	wlcg, err := ConvertToWLCG(record)
+	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -288,7 +288,7 @@ func TestConvertToWLCG_UnknownOperation(t *testing.T) {
 		Write:         0,
 	}
 
-	wlcg, err := ConvertToWLCG(record)
+	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -310,8 +310,8 @@ func TestGenerateUUID(t *testing.T) {
 		VO:        "cms",
 	}
 
-	wlcg1, _ := ConvertToWLCG(record)
-	wlcg2, _ := ConvertToWLCG(record)
+	wlcg1, _ := ConvertToWLCG(record, DefaultWLCGMetadata())
+	wlcg2, _ := ConvertToWLCG(record, DefaultWLCGMetadata())
 
 	// Check basic format (8-4-4-4-12 hex characters)
 	if len(wlcg1.UniqueID) != 36 {
@@ -428,7 +428,7 @@ func TestConvertGStreamToWLCG(t *testing.T) {
 		"server_hostname":  "xrootd.cern.ch",
 	}
 
-	wlcgEvent, err := ConvertGStreamToWLCG(event, false)
+	wlcgEvent, err := ConvertGStreamToWLCG(event, false, DefaultWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
 	}
@@ -630,7 +630,7 @@ func TestConvertGStreamToWLCG_TPC(t *testing.T) {
 		"size":        int64(1000000),
 	}
 
-	wlcgEvent, err := ConvertGStreamToWLCG(event, true)
+	wlcgEvent, err := ConvertGStreamToWLCG(event, true, DefaultWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
 	}
@@ -642,5 +642,60 @@ func TestConvertGStreamToWLCG_TPC(t *testing.T) {
 
 	if metadata.Type != "tpc" {
 		t.Errorf("Type = %v, expected tpc", metadata.Type)
+	}
+}
+
+func TestConvertToWLCG_CustomMetadata(t *testing.T) {
+	record := &CollectorRecord{
+		Site:     "T2_US_Nebraska",
+		Filename: "/store/data/file.root",
+		VO:       "cms",
+		Read:     1000,
+	}
+
+	meta := WLCGMetadata{Producer: "osg", Type: "transfer"}
+	wlcg, err := ConvertToWLCG(record, meta)
+	if err != nil {
+		t.Fatalf("ConvertToWLCG() error = %v", err)
+	}
+
+	if wlcg.Metadata["producer"] != "osg" {
+		t.Errorf("Metadata producer = %v, expected osg", wlcg.Metadata["producer"])
+	}
+	if wlcg.Metadata["type"] != "transfer" {
+		t.Errorf("Metadata type = %v, expected transfer", wlcg.Metadata["type"])
+	}
+}
+
+func TestConvertGStreamToWLCG_CustomMetadata(t *testing.T) {
+	// Only the gstream producer is configurable; the metadata.type values are
+	// structural constants ("metric"/"tpc") and must not change with config.
+	meta := WLCGMetadata{GStreamProducer: "osg-xrootd-cache"}
+
+	cache, err := ConvertGStreamToWLCG(map[string]interface{}{"file_path": "/store/x"}, false, meta)
+	if err != nil {
+		t.Fatalf("ConvertGStreamToWLCG(cache) error = %v", err)
+	}
+	cm, ok := cache["metadata"].(GStreamMetadata)
+	if !ok {
+		t.Fatal("cache metadata should be GStreamMetadata type")
+	}
+	if cm.Producer != "osg-xrootd-cache" {
+		t.Errorf("cache Producer = %v, expected osg-xrootd-cache", cm.Producer)
+	}
+	if cm.Type != "metric" {
+		t.Errorf("cache Type = %v, expected metric (structural constant)", cm.Type)
+	}
+
+	tpc, err := ConvertGStreamToWLCG(map[string]interface{}{"source": "root://x//store/a"}, true, meta)
+	if err != nil {
+		t.Fatalf("ConvertGStreamToWLCG(tpc) error = %v", err)
+	}
+	tm, ok := tpc["metadata"].(GStreamMetadata)
+	if !ok {
+		t.Fatal("tpc metadata should be GStreamMetadata type")
+	}
+	if tm.Type != "tpc" {
+		t.Errorf("tpc Type = %v, expected tpc (structural constant)", tm.Type)
 	}
 }
