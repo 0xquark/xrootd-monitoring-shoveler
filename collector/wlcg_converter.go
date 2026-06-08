@@ -90,9 +90,48 @@ func IsWLCGPacket(record *CollectorRecord) bool {
 	return false
 }
 
+// WLCGMetadata holds the configurable producer/type values used to create the
+// metadata block of WLCG-formatted records. They identify the data source to the
+// downstream pipeline and differ between deployments, so they are supplied via
+// configuration rather than hardcoded. Defaults match the values used by the OSG
+// upstream collector (opensciencegrid/xrootd-monitoring-collector).
+type WLCGMetadata struct {
+	Producer        string // metadata.producer for file-transfer (file-close) records
+	Type            string // metadata.type for file-transfer records
+	GStreamProducer string // metadata.producer for gstream cache & TPC records
+}
+
+// DefaultWLCGMetadata returns the producer/type values hardcoded in the OSG
+// upstream collector, used when no override is configured.
+func DefaultWLCGMetadata() WLCGMetadata {
+	return WLCGMetadata{
+		Producer:        "cms",
+		Type:            "aaa-ng",
+		GStreamProducer: "cms-xrootd-cache",
+	}
+}
+
+// withDefaults fills any empty field with its default, so callers may supply
+// partial overrides (or the zero value) without emitting blank metadata.
+func (m WLCGMetadata) withDefaults() WLCGMetadata {
+	d := DefaultWLCGMetadata()
+	if m.Producer == "" {
+		m.Producer = d.Producer
+	}
+	if m.Type == "" {
+		m.Type = d.Type
+	}
+	if m.GStreamProducer == "" {
+		m.GStreamProducer = d.GStreamProducer
+	}
+	return m
+}
+
 // ConvertToWLCG converts a CollectorRecord to WLCG format
 // Based on references/wlcg_converter.py
-func ConvertToWLCG(record *CollectorRecord) (*WLCGRecord, error) {
+func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata) (*WLCGRecord, error) {
+	meta = meta.withDefaults()
+
 	// Generate unique ID
 	uniqueID := uuid.New().String()
 
@@ -192,8 +231,8 @@ func ConvertToWLCG(record *CollectorRecord) (*WLCGRecord, error) {
 	// Add metadata
 	hostname, _ := os.Hostname()
 	wlcg.Metadata = map[string]interface{}{
-		"producer":    "cms",
-		"type":        "aaa-ng",
+		"producer":    meta.Producer,
+		"type":        meta.Type,
 		"timestamp":   time.Now().UnixNano() / int64(time.Millisecond),
 		"type_prefix": "raw",
 		"host":        hostname,
@@ -320,22 +359,30 @@ type GStreamMetadata struct {
 	ID         string `json:"_id"`
 }
 
+// Cache and TPC gstream type constants used in WLCG GStream metadata
+const (
+	gstreamCacheType = "metric"
+	gstreamTPCType   = "tpc"
+)
+
 // ConvertGStreamToWLCG adds WLCG metadata to a gstream event map
 // Based on references/wlcg_converter.py::ConvertGstream
-func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool) (map[string]interface{}, error) {
+func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool, meta WLCGMetadata) (map[string]interface{}, error) {
+	meta = meta.withDefaults()
+
 	eventCopy := make(map[string]interface{})
 	for k, v := range event {
 		eventCopy[k] = v
 	}
 
 	hostname, _ := os.Hostname()
-	eventType := "metric"
+	eventType := gstreamCacheType
 	if isTPC {
-		eventType = "tpc"
+		eventType = gstreamTPCType
 	}
 
 	eventCopy["metadata"] = GStreamMetadata{
-		Producer:   "cms-xrootd-cache",
+		Producer:   meta.GStreamProducer,
 		Type:       eventType,
 		Timestamp:  time.Now().UnixNano() / int64(time.Millisecond),
 		TypePrefix: "raw",
