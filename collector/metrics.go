@@ -37,24 +37,25 @@ var (
 		Help: "Total number of file close records emitted without a matching open in stateMap (degraded records missing LFN, open-time, and full user context)",
 	})
 
-	// fstreamFileOpenRecordsTotal counts FileOpen records parsed from f-stream packets,
-	// broken down by upstream server IP. Each f-stream packet can carry multiple records.
-	fstreamFileOpenRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "shoveler_fstream_file_open_records_total",
-		Help: "Total number of file open records received in f-stream packets per upstream server IP",
+	// fileOpenRecordsTotal counts FileOpen records parsed from file-record packets
+	// (both f-stream/fstat and t-stream/trace), broken down by upstream server IP.
+	// Each packet can carry multiple records.
+	fileOpenRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_file_open_records_total",
+		Help: "Total number of file open records received in f-stream and t-stream packets per upstream server IP",
 	}, []string{"server_ip"})
 
-	// fstreamFileCloseRecordsTotal counts FileClose records parsed from f-stream packets,
-	// broken down by upstream server IP.
-	fstreamFileCloseRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "shoveler_fstream_file_close_records_total",
-		Help: "Total number of file close records received in f-stream packets per upstream server IP",
+	// fileCloseRecordsTotal counts FileClose records parsed from file-record packets
+	// (both f-stream/fstat and t-stream/trace), broken down by upstream server IP.
+	fileCloseRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_file_close_records_total",
+		Help: "Total number of file close records received in f-stream and t-stream packets per upstream server IP",
 	}, []string{"server_ip"})
 
-	// fstreamFileTimeRecordsTotal counts FileTime (TOD) records parsed from f-stream packets,
-	// broken down by upstream server IP.
-	fstreamFileTimeRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "shoveler_fstream_file_time_records_total",
-		Help: "Total number of file time (TOD) records received in f-stream packets per upstream server IP",
+	// fileTimeRecordsTotal counts FileTime (TOD) records parsed from file-record packets
+	// (both f-stream/fstat and t-stream/trace), broken down by upstream server IP.
+	fileTimeRecordsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_file_time_records_total",
+		Help: "Total number of file time (TOD) records received in f-stream and t-stream packets per upstream server IP",
 	}, []string{"server_ip"})
 )
