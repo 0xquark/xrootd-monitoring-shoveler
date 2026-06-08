@@ -102,7 +102,10 @@ type WLCGMetadata struct {
 }
 
 // DefaultWLCGMetadata returns the producer/type values hardcoded in the OSG
-// upstream collector, used when no override is configured.
+// upstream collector, used when no override is configured. This is the single
+// source of truth for those defaults: the config layer (config.go) deliberately
+// leaves unset fields empty and relies on withDefaults() to fill them, so the
+// defaults are defined in exactly one place.
 func DefaultWLCGMetadata() WLCGMetadata {
 	return WLCGMetadata{
 		Producer:        "cms",
