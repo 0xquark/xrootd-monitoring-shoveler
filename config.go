@@ -47,8 +47,9 @@ type OutputConfig struct {
 
 // WLCGConfig holds the producer/type values used to create the metadata block of
 // WLCG-formatted records. These differ between deployments, so they are
-// configurable instead of hardcoded. Empty values fall back to the default
-// values used by the OSG upstream collector.
+// configurable instead of hardcoded. Unset fields stay empty here and are filled at
+// conversion time by collector.WLCGMetadata.withDefaults(), which owns the OSG
+// upstream collector's default values (a single source of truth for those defaults).
 type WLCGConfig struct {
 	Producer        string // metadata.producer for file-transfer (file-close) records
 	Type            string // metadata.type for file-transfer records
@@ -306,13 +307,13 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 	c.ProfilePort = viper.GetInt("profile.port")
 
 	// WLCG metadata configuration (producer/type used to create WLCG-formatted records).
-	// Defaults match the OSG upstream collector's values; override them for a
-	// WLCG (or other) deployment via config file or environment variables.
-	viper.SetDefault("wlcg.producer", "cms")
+	// Only explicitly configured values are read here; any field left unset stays empty
+	// and is filled at conversion time by collector.WLCGMetadata.withDefaults(), which is
+	// the single source of truth for the OSG upstream collector's default values. Keeping
+	// the defaults in one place avoids the config layer and the converter silently diverging.
+	// Override these for a WLCG (or other) deployment via config file or environment variables.
 	c.WLCG.Producer = viper.GetString("wlcg.producer")
-	viper.SetDefault("wlcg.type", "aaa-ng")
 	c.WLCG.Type = viper.GetString("wlcg.type")
-	viper.SetDefault("wlcg.gstream_producer", "cms-xrootd-cache")
 	c.WLCG.GStreamProducer = viper.GetString("wlcg.gstream_producer")
 
 	viper.SetDefault("queue_directory", "/var/spool/xrootd-monitoring-shoveler/queue")
