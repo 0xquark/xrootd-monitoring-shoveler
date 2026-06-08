@@ -438,7 +438,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 	for _, rec := range packet.FileRecords {
 		switch r := rec.(type) {
 		case parser.FileOpenRecord:
-			fstreamFileOpenRecordsTotal.WithLabelValues(serverIP).Inc()
+			fileOpenRecordsTotal.WithLabelValues(serverIP).Inc()
 			result, err := c.handleFileOpen(r, packet, serverID, windowBeg)
 			if err != nil {
 				return records, err
@@ -447,7 +447,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileCloseRecord:
-			fstreamFileCloseRecordsTotal.WithLabelValues(serverIP).Inc()
+			fileCloseRecordsTotal.WithLabelValues(serverIP).Inc()
 			result, err := c.handleFileClose(r, packet, serverID, windowBeg, windowEnd)
 			if err != nil {
 				return records, err
@@ -456,7 +456,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileTimeRecord:
-			fstreamFileTimeRecordsTotal.WithLabelValues(serverIP).Inc()
+			fileTimeRecordsTotal.WithLabelValues(serverIP).Inc()
 			// The window was already extracted above; the FileTOD record itself
 			// does not correlate to a file operation.
 		case parser.FileDisconnectRecord:
