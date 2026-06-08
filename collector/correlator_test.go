@@ -1386,7 +1386,7 @@ func TestFStreamFileOpenRecordsTotal(t *testing.T) {
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.1"
-	before := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
+	before := testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP))
 
 	openRec := parser.FileOpenRecord{
 		Header:   parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 10, UserId: 1},
@@ -1403,7 +1403,7 @@ func TestFStreamFileOpenRecordsTotal(t *testing.T) {
 	_, err := correlator.ProcessPacket(packet)
 	require.NoError(t, err)
 
-	after := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
+	after := testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP))
 	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file open record")
 }
 
@@ -1414,7 +1414,7 @@ func TestFStreamFileCloseRecordsTotal(t *testing.T) {
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.2"
-	before := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
+	before := testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP))
 
 	closeRec := parser.FileCloseRecord{
 		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 20, UserId: 1},
@@ -1430,7 +1430,7 @@ func TestFStreamFileCloseRecordsTotal(t *testing.T) {
 	_, err := correlator.ProcessPacket(packet)
 	require.NoError(t, err)
 
-	after := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
+	after := testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP))
 	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file close record")
 }
 
@@ -1441,7 +1441,7 @@ func TestFStreamFileTimeRecordsTotal(t *testing.T) {
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.3"
-	before := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+	before := testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP))
 
 	timeRec := parser.FileTimeRecord{
 		Header: parser.FileHeader{RecType: parser.RecTypeTime, FileId: 30},
@@ -1459,7 +1459,7 @@ func TestFStreamFileTimeRecordsTotal(t *testing.T) {
 	_, err := correlator.ProcessPacket(packet)
 	require.NoError(t, err)
 
-	after := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+	after := testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP))
 	assert.Equal(t, float64(1), after-before, "counter should increment by 1 per file time record")
 }
 
@@ -1470,9 +1470,9 @@ func TestFStreamMixedRecordsCountedIndependently(t *testing.T) {
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.4"
-	beforeOpen := testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))
-	beforeClose := testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))
-	beforeTime := testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))
+	beforeOpen := testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP))
+	beforeClose := testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP))
+	beforeTime := testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP))
 
 	openRec := parser.FileOpenRecord{
 		Header: parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 50, UserId: 1},
@@ -1498,9 +1498,9 @@ func TestFStreamMixedRecordsCountedIndependently(t *testing.T) {
 	_, err := correlator.ProcessPacket(packet)
 	require.NoError(t, err)
 
-	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileOpenRecordsTotal.WithLabelValues(serverIP))-beforeOpen)
-	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileCloseRecordsTotal.WithLabelValues(serverIP))-beforeClose)
-	assert.Equal(t, float64(1), testutil.ToFloat64(fstreamFileTimeRecordsTotal.WithLabelValues(serverIP))-beforeTime)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP))-beforeOpen)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP))-beforeClose)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP))-beforeTime)
 }
 
 // TestPacketTypeName verifies that XRootD monitoring packet types are correctly mapped
