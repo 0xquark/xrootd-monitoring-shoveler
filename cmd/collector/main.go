@@ -242,7 +242,7 @@ func emitGStreamEvent(event map[string]interface{}, streamType byte, config *sho
 	var eventJSON []byte
 	var err error
 	if needsWLCG {
-		wlcgEvent, convErr := collector.ConvertGStreamToWLCG(event, streamType == 'P')
+		wlcgEvent, convErr := collector.ConvertGStreamToWLCG(event, streamType == 'P', buildWLCGMetadata(config))
 		if convErr != nil {
 			logger.Errorln("Failed to convert gstream event to WLCG:", convErr)
 			return
@@ -263,6 +263,16 @@ func emitGStreamEvent(event map[string]interface{}, streamType byte, config *sho
 	}
 }
 
+// buildWLCGMetadata maps the WLCG producer/type config into the collector's
+// metadata struct used when creating WLCG-formatted records.
+func buildWLCGMetadata(config *shoveler.Config) collector.WLCGMetadata {
+	return collector.WLCGMetadata{
+		Producer:        config.WLCG.Producer,
+		Type:            config.WLCG.Type,
+		GStreamProducer: config.WLCG.GStreamProducer,
+	}
+}
+
 // buildCorrelatorConfig creates a correlator config from the main config
 func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
 	ttl := time.Duration(config.State.EntryTTL) * time.Second
@@ -275,6 +285,7 @@ func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) colle
 		DNSTimeout:          time.Duration(config.State.DNSTimeout) * time.Second,
 		EnrichmentWorkers:   config.State.EnrichmentWorkers,
 		EnrichmentQueueSize: config.State.EnrichmentQueueSize,
+		WLCGMetadata:        buildWLCGMetadata(config),
 		Logger:              logger,
 	}
 

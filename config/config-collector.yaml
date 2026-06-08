@@ -56,6 +56,18 @@ amqp:
 #  cert: path/to/cert/file
 #  certkey: path/to/certkey/file
 
+# WLCG metadata holds the configurable producer/type values that are used
+# in the "metadata" block of WLCG-formatted records.
+# These identify the data source and differ between deployments; override them
+# here instead of editing the code. Values below are the defaults, matching the
+# OSG upstream collector (opensciencegrid/xrootd-monitoring-collector).
+# Equivalent environment variables: COLLECTOR_WLCG_PRODUCER, COLLECTOR_WLCG_TYPE,
+# COLLECTOR_WLCG_GSTREAM_PRODUCER.
+#wlcg:
+#  producer: cms                      # producer for file-transfer (file-close) records
+#  type: aaa-ng                       # type for file-transfer records
+#  gstream_producer: cms-xrootd-cache # producer for gstream cache & TPC records
+
 listen:
   port: 9993
   ip: 0.0.0.0

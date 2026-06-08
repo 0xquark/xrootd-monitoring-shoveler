@@ -255,7 +255,7 @@ func (c *Correlator) processEnrichmentRequest(req enrichmentRequest) {
 
 func (c *Correlator) buildEnrichedRecord(record *CollectorRecord, wlcgExchange string) (EnrichedRecord, error) {
 	if IsWLCGPacket(record) {
-		wlcgRecord, err := ConvertToWLCG(record)
+		wlcgRecord, err := ConvertToWLCG(record, c.wlcgMetadata)
 		if err != nil {
 			return EnrichedRecord{}, err
 		}

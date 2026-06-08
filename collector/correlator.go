@@ -136,6 +136,7 @@ type Correlator struct {
 	enrichers             []RecordEnricher
 	enrichmentWG          sync.WaitGroup
 	enrichmentDropCount   int64 // atomic; counts records dropped due to full queue
+	wlcgMetadata          WLCGMetadata
 	ctx                   context.Context
 	cancel                context.CancelFunc
 }
@@ -149,6 +150,7 @@ type CorrelatorConfig struct {
 	DNSTimeout          time.Duration
 	EnrichmentWorkers   int // Number of enrichment worker goroutines (default: 5)
 	EnrichmentQueueSize int // Maximum number of pending enrichment requests (default: 1000000)
+	WLCGMetadata        WLCGMetadata // producer/type values used in WLCG records
 	Logger              *logrus.Logger
 }
 
@@ -196,6 +198,7 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		dnsResolver:           &defaultDNSResolver{},
 		enrichmentWorkerCount: config.EnrichmentWorkers,
 		enrichmentQueueSize:   config.EnrichmentQueueSize,
+		wlcgMetadata:          config.WLCGMetadata.withDefaults(),
 		ctx:                   ctx,
 		cancel:                cancel,
 	}
