@@ -198,7 +198,7 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		dnsResolver:           &defaultDNSResolver{},
 		enrichmentWorkerCount: config.EnrichmentWorkers,
 		enrichmentQueueSize:   config.EnrichmentQueueSize,
-		wlcgMetadata:          config.WLCGMetadata.withDefaults(),
+		wlcgMetadata:          config.WLCGMetadata,
 		ctx:                   ctx,
 		cancel:                cancel,
 	}
