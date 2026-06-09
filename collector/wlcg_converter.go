@@ -93,48 +93,18 @@ func IsWLCGPacket(record *CollectorRecord) bool {
 // WLCGMetadata holds the configurable producer/type values used to create the
 // metadata block of WLCG-formatted records. They identify the data source to the
 // downstream pipeline and differ between deployments, so they are supplied via
-// configuration rather than hardcoded. Defaults match the values used by the OSG
-// upstream collector (opensciencegrid/xrootd-monitoring-collector).
+// configuration rather than hardcoded. The converter uses these values as-is;
+// the defaults live in the config layer (config.go sets them with viper), so the
+// binary always supplies complete values here.
 type WLCGMetadata struct {
 	Producer        string // metadata.producer for file-transfer (file-close) records
 	Type            string // metadata.type for file-transfer records
 	GStreamProducer string // metadata.producer for gstream cache & TPC records
 }
 
-// DefaultWLCGMetadata returns the producer/type values hardcoded in the OSG
-// upstream collector, used when no override is configured. This is the single
-// source of truth for those defaults: the config layer (config.go) deliberately
-// leaves unset fields empty and relies on withDefaults() to fill them, so the
-// defaults are defined in exactly one place.
-func DefaultWLCGMetadata() WLCGMetadata {
-	return WLCGMetadata{
-		Producer:        "cms",
-		Type:            "aaa-ng",
-		GStreamProducer: "cms-xrootd-cache",
-	}
-}
-
-// withDefaults fills any empty field with its default, so callers may supply
-// partial overrides (or the zero value) without emitting blank metadata.
-func (m WLCGMetadata) withDefaults() WLCGMetadata {
-	d := DefaultWLCGMetadata()
-	if m.Producer == "" {
-		m.Producer = d.Producer
-	}
-	if m.Type == "" {
-		m.Type = d.Type
-	}
-	if m.GStreamProducer == "" {
-		m.GStreamProducer = d.GStreamProducer
-	}
-	return m
-}
-
 // ConvertToWLCG converts a CollectorRecord to WLCG format
 // Based on references/wlcg_converter.py
 func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata) (*WLCGRecord, error) {
-	meta = meta.withDefaults()
-
 	// Generate unique ID
 	uniqueID := uuid.New().String()
 
@@ -371,8 +341,6 @@ const (
 // ConvertGStreamToWLCG adds WLCG metadata to a gstream event map
 // Based on references/wlcg_converter.py::ConvertGstream
 func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool, meta WLCGMetadata) (map[string]interface{}, error) {
-	meta = meta.withDefaults()
-
 	eventCopy := make(map[string]interface{})
 	for k, v := range event {
 		eventCopy[k] = v

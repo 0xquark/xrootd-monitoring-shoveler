@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// testWLCGMetadata returns sample WLCG metadata for converter tests.
+// This fixture just feeds the converter known values.
+func testWLCGMetadata() WLCGMetadata {
+	return WLCGMetadata{
+		Producer:        "cms",
+		Type:            "aaa-ng",
+		GStreamProducer: "cms-xrootd-cache",
+	}
+}
+
 func TestIsWLCGPacket(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -123,7 +133,7 @@ func TestConvertToWLCG(t *testing.T) {
 		HasFileCloseMsg:        1,
 	}
 
-	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
+	wlcg, err := ConvertToWLCG(record, testWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -259,7 +269,7 @@ func TestConvertToWLCG_WriteOperation(t *testing.T) {
 		Write:         5000000,
 	}
 
-	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
+	wlcg, err := ConvertToWLCG(record, testWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -288,7 +298,7 @@ func TestConvertToWLCG_UnknownOperation(t *testing.T) {
 		Write:         0,
 	}
 
-	wlcg, err := ConvertToWLCG(record, DefaultWLCGMetadata())
+	wlcg, err := ConvertToWLCG(record, testWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertToWLCG() error = %v", err)
 	}
@@ -310,8 +320,8 @@ func TestGenerateUUID(t *testing.T) {
 		VO:        "cms",
 	}
 
-	wlcg1, _ := ConvertToWLCG(record, DefaultWLCGMetadata())
-	wlcg2, _ := ConvertToWLCG(record, DefaultWLCGMetadata())
+	wlcg1, _ := ConvertToWLCG(record, testWLCGMetadata())
+	wlcg2, _ := ConvertToWLCG(record, testWLCGMetadata())
 
 	// Check basic format (8-4-4-4-12 hex characters)
 	if len(wlcg1.UniqueID) != 36 {
@@ -428,7 +438,7 @@ func TestConvertGStreamToWLCG(t *testing.T) {
 		"server_hostname":  "xrootd.cern.ch",
 	}
 
-	wlcgEvent, err := ConvertGStreamToWLCG(event, false, DefaultWLCGMetadata())
+	wlcgEvent, err := ConvertGStreamToWLCG(event, false, testWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
 	}
@@ -630,7 +640,7 @@ func TestConvertGStreamToWLCG_TPC(t *testing.T) {
 		"size":        int64(1000000),
 	}
 
-	wlcgEvent, err := ConvertGStreamToWLCG(event, true, DefaultWLCGMetadata())
+	wlcgEvent, err := ConvertGStreamToWLCG(event, true, testWLCGMetadata())
 	if err != nil {
 		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
 	}
