@@ -80,9 +80,21 @@ func IsWLCGPacket(record *CollectorRecord) bool {
 	return matchesWLCGWithRules(record, defaultWLCGVOs, defaultWLCGPathPrefixes)
 }
 
+// WLCGMetadata holds the configurable producer/type values used to create the
+// metadata block of WLCG-formatted records. They identify the data source to the
+// downstream pipeline and differ between deployments, so they are supplied via
+// configuration rather than hardcoded. The converter uses these values as-is;
+// the defaults live in the config layer (config.go sets them with viper), so the
+// binary always supplies complete values here.
+type WLCGMetadata struct {
+	Producer        string // metadata.producer for file-transfer (file-close) records
+	Type            string // metadata.type for file-transfer records
+	GStreamProducer string // metadata.producer for gstream cache & TPC records
+}
+
 // ConvertToWLCG converts a CollectorRecord to WLCG format
 // Based on references/wlcg_converter.py
-func ConvertToWLCG(record *CollectorRecord) (*WLCGRecord, error) {
+func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata) (*WLCGRecord, error) {
 	// Generate unique ID
 	uniqueID := uuid.New().String()
 
@@ -182,8 +194,8 @@ func ConvertToWLCG(record *CollectorRecord) (*WLCGRecord, error) {
 	// Add metadata
 	hostname, _ := os.Hostname()
 	wlcg.Metadata = map[string]interface{}{
-		"producer":    "cms",
-		"type":        "aaa-ng",
+		"producer":    meta.Producer,
+		"type":        meta.Type,
 		"timestamp":   time.Now().UnixNano() / int64(time.Millisecond),
 		"type_prefix": "raw",
 		"host":        hostname,
@@ -310,22 +322,28 @@ type GStreamMetadata struct {
 	ID         string `json:"_id"`
 }
 
+// Cache and TPC gstream type constants used in WLCG GStream metadata
+const (
+	gstreamCacheType = "metric"
+	gstreamTPCType   = "tpc"
+)
+
 // ConvertGStreamToWLCG adds WLCG metadata to a gstream event map
 // Based on references/wlcg_converter.py::ConvertGstream
-func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool) (map[string]interface{}, error) {
+func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool, meta WLCGMetadata) (map[string]interface{}, error) {
 	eventCopy := make(map[string]interface{})
 	for k, v := range event {
 		eventCopy[k] = v
 	}
 
 	hostname, _ := os.Hostname()
-	eventType := "metric"
+	eventType := gstreamCacheType
 	if isTPC {
-		eventType = "tpc"
+		eventType = gstreamTPCType
 	}
 
 	eventCopy["metadata"] = GStreamMetadata{
-		Producer:   "cms-xrootd-cache",
+		Producer:   meta.GStreamProducer,
 		Type:       eventType,
 		Timestamp:  time.Now().UnixNano() / int64(time.Millisecond),
 		TypePrefix: "raw",

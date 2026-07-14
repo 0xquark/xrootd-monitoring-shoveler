@@ -8,9 +8,19 @@ import (
 	"github.com/spf13/viper"
 )
 
+// WLCGConfig holds both the routing rules that decide whether a record is a
+// WLCG packet and the producer/type values written into the metadata block of
+// WLCG-formatted records. These differ between deployments, so they are
+// configurable instead of hardcoded.
 type WLCGConfig struct {
+	// Routing: which records are treated as WLCG packets.
 	VOs          []string // case-insensitive exact match; defaults to ["cms"]
 	PathPrefixes []string // HasPrefix match; defaults to ["/store", "/user/dteam"]
+
+	// Metadata: producer/type values written into WLCG-formatted records.
+	Producer        string // metadata.producer for file-transfer (file-close) records
+	Type            string // metadata.type for file-transfer records
+	GStreamProducer string // metadata.producer for gstream cache & TPC records
 }
 
 type FilterConfig struct {
@@ -59,6 +69,7 @@ type Config struct {
 	Input                 InputConfig
 	State                 StateConfig
 	Output                OutputConfig
+	WLCG                  WLCGConfig
 	Mode                  string   // Operating mode: "shoveler" or "collector"
 	MQ                    string   // Which technology to use for the MQ connection
 	AmqpURL               *url.URL // AMQP URL (password comes from the token)
@@ -89,7 +100,6 @@ type Config struct {
 	QueueDir              string
 	IpMapAll              string
 	IpMap                 map[string]string
-	WLCG                  WLCGConfig
 	Filter                FilterConfig
 }
 
@@ -305,6 +315,17 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 	c.Profile = viper.GetBool("profile.enable")
 	viper.SetDefault("profile.port", 3030)
 	c.ProfilePort = viper.GetInt("profile.port")
+
+	// WLCG metadata configuration (producer/type used to create WLCG-formatted records).
+	// These viper defaults are the single source of truth for the values and match the OSG
+	// upstream collector; a config file or COLLECTOR_WLCG_* environment variable
+	// overrides them for a WLCG (or other) deployment.
+	viper.SetDefault("wlcg.producer", "cms")
+	c.WLCG.Producer = viper.GetString("wlcg.producer")
+	viper.SetDefault("wlcg.type", "aaa-ng")
+	c.WLCG.Type = viper.GetString("wlcg.type")
+	viper.SetDefault("wlcg.gstream_producer", "cms-xrootd-cache")
+	c.WLCG.GStreamProducer = viper.GetString("wlcg.gstream_producer")
 
 	viper.SetDefault("queue_directory", "/var/spool/xrootd-monitoring-shoveler/queue")
 	c.QueueDir = viper.GetString("queue_directory")
