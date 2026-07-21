@@ -728,10 +728,15 @@ func (c *Correlator) handleFileOpen(rec parser.FileOpenRecord, packet *parser.Pa
 		userId = rec.User
 	}
 
+	openTime := windowBeg
+	if openTime <= 0 {
+		openTime = time.Now().Unix()
+	}
+
 	state := &FileState{
 		FileID:    rec.Header.FileId,
 		UserID:    userId,
-		OpenTime:  windowBeg,
+		OpenTime:  openTime,
 		FileSize:  rec.FileSize,
 		Filename:  filename,
 		ServerID:  serverID,
