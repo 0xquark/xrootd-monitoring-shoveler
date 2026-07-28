@@ -117,8 +117,14 @@ func main() {
 		shoveler.StartProfile(config.ProfilePort)
 	}
 
+	// Root context for background workers (currently the SciTags registry
+	// refresh loop). Cancelled when main returns so they stop cleanly instead of
+	// running until process exit.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Always run in collector mode
-	runCollectorMode(&config, output, logger)
+	runCollectorMode(ctx, &config, output, logger)
 }
 
 // emitEnrichedRecord handles outputting an already-enriched payload to the configured destination.
@@ -278,7 +284,7 @@ func buildWLCGMetadata(config *shoveler.Config) collector.WLCGMetadata {
 // starts from the embedded snapshot; when a source is configured it attempts to
 // load it, and on failure keeps the embedded data (fail-open). URL sources are
 // refreshed in the background for the life of the process.
-func buildScitagsRegistry(config *shoveler.Config, logger *logrus.Logger) *collector.ScitagsRegistry {
+func buildScitagsRegistry(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) *collector.ScitagsRegistry {
 	registry := collector.NewScitagsRegistry(logger)
 
 	src := config.Scitags.Source
@@ -286,15 +292,15 @@ func buildScitagsRegistry(config *shoveler.Config, logger *logrus.Logger) *colle
 		return registry
 	}
 
-	if err := registry.LoadSource(context.Background(), src); err != nil {
+	if err := registry.LoadSource(ctx, src); err != nil {
 		logger.Warnf("Failed to load SciTags source %q, using embedded snapshot: %v", src, err)
 	}
-	registry.StartRefresh(context.Background(), src, time.Duration(config.Scitags.RefreshInterval)*time.Second)
+	registry.StartRefresh(ctx, src, time.Duration(config.Scitags.RefreshInterval)*time.Second)
 	return registry
 }
 
 // buildCorrelatorConfig creates a correlator config from the main config
-func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
+func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
 	ttl := time.Duration(config.State.EntryTTL) * time.Second
 
 	correlatorConfig := collector.CorrelatorConfig{
@@ -306,7 +312,7 @@ func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) colle
 		EnrichmentWorkers:   config.State.EnrichmentWorkers,
 		EnrichmentQueueSize: config.State.EnrichmentQueueSize,
 		WLCGMetadata:        buildWLCGMetadata(config),
-		Scitags:             buildScitagsRegistry(config, logger),
+		Scitags:             buildScitagsRegistry(ctx, config, logger),
 		Logger:              logger,
 		WLCGVOs:             config.WLCG.VOs,
 		WLCGPathPrefixes:    config.WLCG.PathPrefixes,
@@ -318,18 +324,18 @@ func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) colle
 }
 
 // runCollectorMode runs the collector mode with full packet parsing and correlation
-func runCollectorMode(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorMode(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Support UDP, file, and RabbitMQ inputs
 	switch config.Input.Type {
 	case "file":
-		runCollectorModeFile(config, output, logger)
+		runCollectorModeFile(ctx, config, output, logger)
 	case "rabbitmq", "amqp":
-		if err := runCollectorModeRabbitMQ(config, output, logger); err != nil {
+		if err := runCollectorModeRabbitMQ(ctx, config, output, logger); err != nil {
 			logger.Fatalln("Failed to run RabbitMQ collector:", err)
 		}
 	default:
 		// Default to UDP
-		runCollectorModeUDP(config, output, logger)
+		runCollectorModeUDP(ctx, config, output, logger)
 	}
 }
 
@@ -447,9 +453,9 @@ func processPackets(source input.PacketSource, correlator *collector.Correlator,
 }
 
 // runCollectorModeFile processes packets from a file in collector mode
-func runCollectorModeFile(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorModeFile(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
@@ -493,9 +499,9 @@ func runCollectorModeFile(config *shoveler.Config, output connectors.OutputConne
 }
 
 // runCollectorModeUDP processes packets from UDP in collector mode
-func runCollectorModeUDP(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorModeUDP(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
@@ -539,9 +545,9 @@ func runCollectorModeUDP(config *shoveler.Config, output connectors.OutputConnec
 }
 
 // runCollectorModeRabbitMQ processes packets from RabbitMQ in collector mode
-func runCollectorModeRabbitMQ(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) error {
+func runCollectorModeRabbitMQ(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) error {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
