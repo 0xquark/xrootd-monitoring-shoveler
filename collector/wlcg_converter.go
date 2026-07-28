@@ -65,6 +65,9 @@ type WLCGRecord struct {
 	WriteSigma             int32                  `json:"write_sigma,omitempty"`
 	Experiment             string                 `json:"experiment,omitempty"`
 	Activity               string                 `json:"activity,omitempty"`
+	ExperimentID           int                    `json:"experiment_id,omitempty"`
+	ActivityID             int                    `json:"activity_id,omitempty"`
+	ScitagsVO              string                 `json:"scitags_vo,omitempty"`
 	CRABId                 string                 `json:"CRAB_Id,omitempty"`
 	CRABRetry              string                 `json:"CRAB_Retry,omitempty"`
 	CRABWorkflow           string                 `json:"CRAB_Workflow,omitempty"`
@@ -172,6 +175,9 @@ func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata) (*WLCGRecord, err
 		WriteOperations:        record.WriteOperations,
 		Experiment:             record.Experiment,
 		Activity:               record.Activity,
+		ExperimentID:           record.ExperimentID,
+		ActivityID:             record.ActivityID,
+		ScitagsVO:              record.ScitagsVO,
 	}
 
 	// Parse appinfo for CRAB information if present
