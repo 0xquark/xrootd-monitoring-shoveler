@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -273,6 +274,25 @@ func buildWLCGMetadata(config *shoveler.Config) collector.WLCGMetadata {
 	}
 }
 
+// buildScitagsRegistry constructs the SciTags registry from config. It always
+// starts from the embedded snapshot; when a source is configured it attempts to
+// load it, and on failure keeps the embedded data (fail-open). URL sources are
+// refreshed in the background for the life of the process.
+func buildScitagsRegistry(config *shoveler.Config, logger *logrus.Logger) *collector.ScitagsRegistry {
+	registry := collector.NewScitagsRegistry(logger)
+
+	src := config.Scitags.Source
+	if src == "" {
+		return registry
+	}
+
+	if err := registry.LoadSource(context.Background(), src); err != nil {
+		logger.Warnf("Failed to load SciTags source %q, using embedded snapshot: %v", src, err)
+	}
+	registry.StartRefresh(context.Background(), src, time.Duration(config.Scitags.RefreshInterval)*time.Second)
+	return registry
+}
+
 // buildCorrelatorConfig creates a correlator config from the main config
 func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
 	ttl := time.Duration(config.State.EntryTTL) * time.Second
@@ -286,6 +306,7 @@ func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) colle
 		EnrichmentWorkers:   config.State.EnrichmentWorkers,
 		EnrichmentQueueSize: config.State.EnrichmentQueueSize,
 		WLCGMetadata:        buildWLCGMetadata(config),
+		Scitags:             buildScitagsRegistry(config, logger),
 		Logger:              logger,
 		WLCGVOs:             config.WLCG.VOs,
 		WLCGPathPrefixes:    config.WLCG.PathPrefixes,
