@@ -110,6 +110,10 @@ type Config struct {
 	IpMapAll              string
 	IpMap                 map[string]string
 	Filter                FilterConfig
+
+	// VO names the VO this collector instance serves; empty (the default) leaves
+	// every record's VO exactly as the packet stream reported it.
+	VO string
 }
 
 func (c *Config) ReadConfig() {
@@ -358,8 +362,29 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 	// Defaults preserve current behavior: CMS VO and /store, /user/dteam paths.
 	viper.SetDefault("wlcg.vos", []string{"cms"})
 	viper.SetDefault("wlcg.path_prefixes", []string{"/store", "/user/dteam"})
+	// An explicitly empty list ("vos: []") disables that half of the routing rule.
+	// Viper returns nil only in that case - an absent key yields the default set
+	// above - so nil is normalized to an empty non-nil slice, which the correlator
+	// keeps as-is instead of substituting the defaults back in.
 	c.WLCG.VOs = viper.GetStringSlice("wlcg.vos")
+	if c.WLCG.VOs == nil {
+		c.WLCG.VOs = []string{}
+	}
 	c.WLCG.PathPrefixes = viper.GetStringSlice("wlcg.path_prefixes")
+	if c.WLCG.PathPrefixes == nil {
+		c.WLCG.PathPrefixes = []string{}
+	}
+
+	// vo names the VO this collector instance serves (collector mode only). Several
+	// collectors commonly publish into one broker and a record only carries a VO when
+	// the auth/token stream supplied one, so records arrive with nothing that says
+	// which instance produced them. When set, the value is written into the "vo"
+	// field of every record the collector emits, on the record itself rather than in
+	// the metadata block (MONIT rejects metadata fields it has no schema for).
+	// It has no default: unset leaves output byte-identical to upstream. It is
+	// applied after routing and filtering have run, so it cannot change which
+	// exchange a record lands on or whether it is dropped.
+	c.VO = strings.TrimSpace(viper.GetString("vo"))
 
 	// Record drop filter (collector mode only); defaults to drop nothing.
 	c.Filter.DropPathPrefixes = viper.GetStringSlice("filter.drop_path_prefixes")

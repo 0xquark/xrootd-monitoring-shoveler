@@ -38,6 +38,12 @@ state:
 # wlcg:
 #   vos: ["cms"]                              # default
 #   path_prefixes: ["/store", "/user/dteam"]  # default
+#
+# Set both lists to [] to turn WLCG conversion off entirely, so every record is
+# published as a plain collector record on the main exchange:
+# wlcg:
+#   vos: []
+#   path_prefixes: []
 
 # Record drop filter (collector mode only)
 # Records matching any VO (case-insensitive) OR any path prefix are dropped
@@ -85,6 +91,21 @@ amqp:
 #  producer: cms                      # producer for file-transfer (file-close) records
 #  type: aaa-ng                       # type for file-transfer records
 #  gstream_producer: cms-xrootd-cache # producer for gstream cache & TPC records
+
+# The VO this collector instance serves (collector mode only).
+# Several collectors commonly publish into one broker, and a record only carries
+# a VO when the auth/token stream supplied one, so records arrive with nothing
+# that says which instance produced them. Set this and the value becomes the
+# "vo" field of every record the collector emits both the records on the main
+# exchange and WLCG-formatted ones.
+# Equivalent environment variable: COLLECTOR_VO.
+#
+# It has no default: leave it unset and every record keeps the VO the packet
+# stream reported (usually empty), exactly as before.
+# The value is stamped after the drop filter and WLCG routing have run, both of
+# which still match on the packet's own VO so setting this can never change
+# which exchange a record lands on, or cause one to be dropped.
+#vo: alice
 
 listen:
   port: 9993

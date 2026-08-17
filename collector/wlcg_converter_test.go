@@ -709,3 +709,4 @@ func TestConvertGStreamToWLCG_CustomMetadata(t *testing.T) {
 		t.Errorf("tpc Type = %v, expected tpc (structural constant)", tm.Type)
 	}
 }
+

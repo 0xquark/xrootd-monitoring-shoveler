@@ -159,6 +159,9 @@ type Correlator struct {
 	// Record drop filter
 	dropPathPrefixes []string
 	dropVOs          []string
+
+	// Configured VO stamped onto every emitted record
+	vo string
 }
 
 // CorrelatorConfig holds configuration for the correlator including DNS enrichment
@@ -185,6 +188,11 @@ type CorrelatorConfig struct {
 	// silently dropped before any publish. Defaults to empty (drop nothing).
 	DropPathPrefixes []string
 	DropVOs          []string
+
+	// VO names the VO this collector instance serves. When set it becomes the VO of
+	// every emitted record, identifying the instance that produced it. Empty (the
+	// default) leaves each record's VO as the packet stream reported it.
+	VO string
 }
 
 // NewCorrelator creates a new correlator
@@ -254,6 +262,7 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		wlcgPathPrefixes:      wlcgPathPrefixes,
 		dropPathPrefixes:      config.DropPathPrefixes,
 		dropVOs:               config.DropVOs,
+		vo:                    config.VO,
 	}
 
 	if config.EnableDNSEnrichment {

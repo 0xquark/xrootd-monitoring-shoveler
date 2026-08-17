@@ -318,6 +318,7 @@ func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger 
 		WLCGPathPrefixes:    config.WLCG.PathPrefixes,
 		DropPathPrefixes:    config.Filter.DropPathPrefixes,
 		DropVOs:             config.Filter.DropVOs,
+		VO:                  config.VO,
 	}
 
 	return correlatorConfig

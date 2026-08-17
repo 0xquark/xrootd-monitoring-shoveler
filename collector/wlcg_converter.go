@@ -93,6 +93,13 @@ type WLCGMetadata struct {
 	Producer        string // metadata.producer for file-transfer (file-close) records
 	Type            string // metadata.type for file-transfer records
 	GStreamProducer string // metadata.producer for gstream cache & TPC records
+
+	// VO identifies the collector instance that produced the record. Multiple
+	// collectors commonly publish to one broker, so this value is written into the
+	// record's own "vo" field to let consumers tell them apart, overriding whatever
+	// the packet stream reported.
+	// Empty means the record keeps the VO parsed from the auth/token stream.
+	VO string
 }
 
 // ConvertToWLCG converts a CollectorRecord to WLCG format
