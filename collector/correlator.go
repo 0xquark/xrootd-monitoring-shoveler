@@ -153,6 +153,7 @@ type Correlator struct {
 	cancel                context.CancelFunc
 
 	// WLCG routing configuration
+	wlcgDisabled     bool
 	wlcgVOs          []string
 	wlcgPathPrefixes []string
 
@@ -176,6 +177,11 @@ type CorrelatorConfig struct {
 	WLCGMetadata        WLCGMetadata     // producer/type values used in WLCG records
 	Scitags             *ScitagsRegistry // SciTags id->name resolver; defaults to the embedded snapshot when nil
 	Logger              *logrus.Logger
+
+	// DisableWLCG turns WLCG conversion off wholesale: no record is converted and
+	// the routing rules below are never consulted. It is expressed negatively so
+	// the zero value keeps the upstream behavior of converting matching records.
+	DisableWLCG bool
 
 	// WLCG routing: records matching any VO (case-insensitive) or path prefix are
 	// converted and routed to the WLCG exchange.
@@ -258,6 +264,7 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		scitags:               config.Scitags,
 		ctx:                   ctx,
 		cancel:                cancel,
+		wlcgDisabled:          config.DisableWLCG,
 		wlcgVOs:               wlcgVOs,
 		wlcgPathPrefixes:      wlcgPathPrefixes,
 		dropPathPrefixes:      config.DropPathPrefixes,

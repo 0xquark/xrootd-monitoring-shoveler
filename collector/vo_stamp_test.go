@@ -198,3 +198,58 @@ func TestEmptyRoutingListsAlwaysUseCollectorRecord(t *testing.T) {
 		}
 	}
 }
+
+// TestDisableWLCGSkipsConversion covers the master switch at the correlator: with
+// WLCG disabled, a record matching every default routing rule is still published
+// as a plain collector record and the rules are never consulted.
+func TestDisableWLCGSkipsConversion(t *testing.T) {
+	correlator := NewCorrelatorWithConfig(CorrelatorConfig{
+		TTL:              5 * time.Second,
+		MaxEntries:       0,
+		DisableWLCG:      true,
+		WLCGVOs:          []string{"cms"},
+		WLCGPathPrefixes: []string{"/store"},
+	})
+	defer correlator.Stop()
+
+	record := &CollectorRecord{VO: "cms", Filename: "/store/data/file.root"}
+
+	if correlator.matchesWLCG(record) {
+		t.Fatal("WLCG matching should be off when DisableWLCG is set")
+	}
+
+	enriched, err := correlator.buildEnrichedRecord(record, "wlcg-exchange")
+	if err != nil {
+		t.Fatalf("buildEnrichedRecord() error = %v", err)
+	}
+
+	if enriched.Exchange != "" {
+		t.Errorf("Exchange = %q, expected the main exchange", enriched.Exchange)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(enriched.Payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if _, ok := decoded["file_lfn"]; ok {
+		t.Error("payload should be a collector record, not WLCG")
+	}
+}
+
+// TestWLCGEnabledByDefaultInConfig pins the zero value of the library-facing
+// switch: a CorrelatorConfig that never mentions it keeps converting, so
+// embedders and upstream callers are unaffected.
+func TestWLCGEnabledByDefaultInConfig(t *testing.T) {
+	correlator := NewCorrelatorWithConfig(CorrelatorConfig{
+		TTL:        5 * time.Second,
+		MaxEntries: 0,
+	})
+	defer correlator.Stop()
+
+	record := &CollectorRecord{VO: "cms", Filename: "/store/data/file.root"}
+
+	if !correlator.matchesWLCG(record) {
+		t.Error("WLCG matching should stay on when DisableWLCG is not set")
+	}
+}

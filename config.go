@@ -13,7 +13,13 @@ import (
 // WLCG-formatted records. These differ between deployments, so they are
 // configurable instead of hardcoded.
 type WLCGConfig struct {
-	// Routing: which records are treated as WLCG packets.
+	// Enabled turns WLCG conversion on or off wholesale. When false no record and
+	// no gstream event is converted, whatever the routing rules below say, and
+	// everything is published in its native form on the regular exchanges.
+	// Defaults to true, matching the OSG upstream collector.
+	Enabled bool
+
+	// Routing: which records are treated as WLCG packets (ignored when disabled).
 	VOs          []string // case-insensitive exact match; defaults to ["cms"]
 	PathPrefixes []string // HasPrefix match; defaults to ["/store", "/user/dteam"]
 
@@ -357,6 +363,14 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 
 	// If the map is not set
 	c.IpMap = viper.GetStringMapString("map")
+
+	// wlcg.enabled is the master switch for WLCG conversion (collector mode only).
+	// Set it to false and no file-transfer record and no gstream event is converted
+	// to WLCG format: the routing rules below are never consulted and everything is
+	// published in its native form. Defaults to true so upstream behavior is
+	// unchanged unless a deployment opts out.
+	viper.SetDefault("wlcg.enabled", true)
+	c.WLCG.Enabled = viper.GetBool("wlcg.enabled")
 
 	// WLCG routing configuration (collector mode only)
 	// Defaults preserve current behavior: CMS VO and /store, /user/dteam paths.

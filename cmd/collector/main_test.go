@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -142,5 +143,67 @@ func TestGStreamWorkers_ProcessAndEmit(t *testing.T) {
 	}
 	if len(exchanges) != 1 || exchanges[0] != "cache-exchange" {
 		t.Fatalf("expected exchange cache-exchange, got %#v", exchanges)
+	}
+}
+
+// TestEmitGStreamEvent_WLCGDisabled covers the gstream half of the wlcg.enabled
+// switch: a cache event whose path would normally be converted stays in its
+// native form on the regular cache exchange when WLCG conversion is off.
+func TestEmitGStreamEvent_WLCGDisabled(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	config := &shoveler.Config{
+		AmqpExchange:          "main",
+		AmqpExchangeCache:     "cache",
+		AmqpExchangeTPC:       "tpc",
+		AmqpExchangeWLCGCache: "wlcg-cache",
+		AmqpExchangeWLCGTPC:   "wlcg-tpc",
+	}
+	config.WLCG.Enabled = false
+
+	output := &mockOutputConnector{}
+
+	// "/store" is exactly the path that triggers WLCG conversion when enabled.
+	event := map[string]interface{}{"lfn": "/store/data/file.root"}
+	emitGStreamEvent(event, 'C', config, output, logger)
+
+	_, exchanges := output.snapshot()
+	if len(exchanges) != 1 {
+		t.Fatalf("expected 1 write, got %d", len(exchanges))
+	}
+
+	if exchanges[0] != "cache" {
+		t.Errorf("exchange = %q, expected the regular cache exchange", exchanges[0])
+	}
+}
+
+// TestEmitGStreamEvent_WLCGEnabled is the counterpart: the same event with the
+// switch on is converted and routed to the WLCG cache exchange.
+func TestEmitGStreamEvent_WLCGEnabled(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	config := &shoveler.Config{
+		AmqpExchange:          "main",
+		AmqpExchangeCache:     "cache",
+		AmqpExchangeTPC:       "tpc",
+		AmqpExchangeWLCGCache: "wlcg-cache",
+		AmqpExchangeWLCGTPC:   "wlcg-tpc",
+	}
+	config.WLCG.Enabled = true
+
+	output := &mockOutputConnector{}
+
+	event := map[string]interface{}{"lfn": "/store/data/file.root"}
+	emitGStreamEvent(event, 'C', config, output, logger)
+
+	_, exchanges := output.snapshot()
+	if len(exchanges) != 1 {
+		t.Fatalf("expected 1 write, got %d", len(exchanges))
+	}
+
+	if exchanges[0] != "wlcg-cache" {
+		t.Errorf("exchange = %q, expected the WLCG cache exchange", exchanges[0])
 	}
 }

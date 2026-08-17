@@ -31,23 +31,29 @@ state:
   # gstream_queue_size: 20000 # Max pending gstream packets kept in memory
   # dns_timeout: 2            # DNS lookup timeout in seconds
 
-# WLCG routing configuration (collector mode only)
-# Records matching any VO (case-insensitive) OR any path prefix are converted to
-# WLCG format and published to the WLCG exchange instead of the main exchange.
-# Omitting this block preserves the current default behavior.
+# WLCG conversion (collector mode only)
+#
+# wlcg.enabled is the master switch. Set it to false and nothing is converted to
+# WLCG format neither file-transfer records nor gstream cache/TPC events
+# whatever the routing rules say. Every record is then published in its native
+# form: collector records on the main exchange, gstream events on their regular
+# cache/TPC exchanges. Defaults to true, matching the OSG upstream collector.
+# Equivalent environment variable: COLLECTOR_WLCG_ENABLED.
+# wlcg:
+#   enabled: false
+#
+# Routing rules, consulted only while enabled. Records matching any VO
+# (case-insensitive) OR any path prefix are converted to WLCG format and
+# published to the WLCG exchange instead of the main exchange.
+# Omitting them preserves the current default behavior; an explicit [] turns off
+# that one rule while leaving the other in force.
 # wlcg:
 #   vos: ["cms"]                              # default
 #   path_prefixes: ["/store", "/user/dteam"]  # default
-#
-# Set both lists to [] to turn WLCG conversion off entirely, so every record is
-# published as a plain collector record on the main exchange:
-# wlcg:
-#   vos: []
-#   path_prefixes: []
 
 # Record drop filter (collector mode only)
 # Records matching any VO (case-insensitive) OR any path prefix are dropped
-# entirely — published to neither the main exchange nor the WLCG exchange.
+# entirely: published to neither the main exchange nor the WLCG exchange.
 # The drop filter is evaluated before WLCG routing.
 # A Prometheus counter (shoveler_records_dropped{reason="vo|path_prefix"})
 # Default is to drop nothing (empty lists).

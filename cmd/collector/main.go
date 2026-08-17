@@ -246,6 +246,18 @@ func emitGStreamEvent(event map[string]interface{}, streamType byte, config *sho
 		exchange = config.AmqpExchange
 	}
 
+	// The master switch also covers gstream events: with WLCG disabled a cache or
+	// TPC event stays in its native form on its regular exchange.
+	if !config.WLCG.Enabled {
+		needsWLCG = false
+		switch streamType {
+		case 'C':
+			exchange = config.AmqpExchangeCache
+		case 'P':
+			exchange = config.AmqpExchangeTPC
+		}
+	}
+
 	var eventJSON []byte
 	var err error
 	if needsWLCG {
@@ -314,6 +326,7 @@ func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger 
 		WLCGMetadata:        buildWLCGMetadata(config),
 		Scitags:             buildScitagsRegistry(ctx, config, logger),
 		Logger:              logger,
+		DisableWLCG:         !config.WLCG.Enabled,
 		WLCGVOs:             config.WLCG.VOs,
 		WLCGPathPrefixes:    config.WLCG.PathPrefixes,
 		DropPathPrefixes:    config.Filter.DropPathPrefixes,
