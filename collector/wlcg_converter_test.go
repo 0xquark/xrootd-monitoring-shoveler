@@ -709,3 +709,125 @@ func TestConvertGStreamToWLCG_CustomMetadata(t *testing.T) {
 		t.Errorf("tpc Type = %v, expected tpc (structural constant)", tm.Type)
 	}
 }
+
+// TestConvertToWLCGConfiguredVO checks the configured collector VO: it replaces
+// the record's own VO in the record body, is left out of the metadata block
+// (MONIT rejects metadata fields it has no schema for), and changes nothing
+// when unset.
+func TestConvertToWLCGConfiguredVO(t *testing.T) {
+	record := &CollectorRecord{
+		VO:       "cms",
+		Filename: "/store/data/file.root",
+	}
+
+	t.Run("configured VO replaces the record VO", func(t *testing.T) {
+		meta := testWLCGMetadata()
+		meta.VO = "atlas"
+
+		wlcg, err := ConvertToWLCG(record, meta)
+		if err != nil {
+			t.Fatalf("ConvertToWLCG() error = %v", err)
+		}
+
+		if wlcg.VO != "atlas" {
+			t.Errorf("VO = %v, expected atlas", wlcg.VO)
+		}
+
+		if _, ok := wlcg.Metadata["vo"]; ok {
+			t.Errorf("metadata should carry no vo field, got %v", wlcg.Metadata["vo"])
+		}
+
+		if record.VO != "cms" {
+			t.Errorf("source record VO = %v, expected it to stay cms", record.VO)
+		}
+	})
+
+	t.Run("unset VO keeps the record VO", func(t *testing.T) {
+		wlcg, err := ConvertToWLCG(record, testWLCGMetadata())
+		if err != nil {
+			t.Fatalf("ConvertToWLCG() error = %v", err)
+		}
+
+		if wlcg.VO != "cms" {
+			t.Errorf("VO = %v, expected cms", wlcg.VO)
+		}
+	})
+
+	t.Run("configured VO is serialized in the record body", func(t *testing.T) {
+		meta := testWLCGMetadata()
+		meta.VO = "atlas"
+
+		wlcg, err := ConvertToWLCG(record, meta)
+		if err != nil {
+			t.Fatalf("ConvertToWLCG() error = %v", err)
+		}
+
+		data, err := wlcg.ToJSON()
+		if err != nil {
+			t.Fatalf("ToJSON() error = %v", err)
+		}
+
+		var decoded struct {
+			VO       string                 `json:"vo"`
+			Metadata map[string]interface{} `json:"metadata"`
+		}
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
+		}
+
+		if decoded.VO != "atlas" {
+			t.Errorf("serialized vo = %v, expected atlas", decoded.VO)
+		}
+
+		if _, ok := decoded.Metadata["vo"]; ok {
+			t.Errorf("serialized metadata should not contain vo, got %v", decoded.Metadata["vo"])
+		}
+	})
+}
+
+// TestConvertGStreamToWLCGConfiguredVO checks that gstream cache/TPC events
+// carry the collector VO on the event itself, and are untouched when unset.
+func TestConvertGStreamToWLCGConfiguredVO(t *testing.T) {
+	event := map[string]interface{}{
+		"file_path": "/store/data/file.root",
+	}
+
+	meta := testWLCGMetadata()
+	meta.VO = "atlas"
+
+	wlcgEvent, err := ConvertGStreamToWLCG(event, false, meta)
+	if err != nil {
+		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
+	}
+
+	if wlcgEvent["vo"] != "atlas" {
+		t.Errorf("event vo = %v, expected atlas", wlcgEvent["vo"])
+	}
+
+	if _, ok := event["vo"]; ok {
+		t.Error("input event should not be mutated")
+	}
+
+	metadata, ok := wlcgEvent["metadata"].(GStreamMetadata)
+	if !ok {
+		t.Fatal("metadata should be GStreamMetadata type")
+	}
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	if strings.Contains(string(data), "\"vo\"") {
+		t.Errorf("gstream metadata should not contain vo: %s", data)
+	}
+
+	unset, err := ConvertGStreamToWLCG(event, true, testWLCGMetadata())
+	if err != nil {
+		t.Fatalf("ConvertGStreamToWLCG() error = %v", err)
+	}
+
+	if _, ok := unset["vo"]; ok {
+		t.Errorf("event should carry no vo when unset, got %v", unset["vo"])
+	}
+}
