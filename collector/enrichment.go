@@ -260,7 +260,19 @@ func (c *Correlator) processEnrichmentRequest(req enrichmentRequest) {
 }
 
 func (c *Correlator) buildEnrichedRecord(record *CollectorRecord, wlcgExchange string) (EnrichedRecord, error) {
-	if c.matchesWLCG(record) {
+	// Route on the VO the packet reported, before any configured VO is stamped on.
+	isWLCG := c.matchesWLCG(record)
+
+	// A configured VO identifies the collector instance that produced the record,
+	// replacing whatever the packet stream reported. It is stamped after the drop
+	// filter and the routing decision above have both matched on the packet's own
+	// VO, so it can change neither the exchange a record lands on nor whether it
+	// is dropped.
+	if c.vo != "" {
+		record.VO = c.vo
+	}
+
+	if isWLCG {
 		wlcgRecord, err := ConvertToWLCG(record, c.wlcgMetadata)
 		if err != nil {
 			return EnrichedRecord{}, err

@@ -13,7 +13,13 @@ import (
 // WLCG-formatted records. These differ between deployments, so they are
 // configurable instead of hardcoded.
 type WLCGConfig struct {
-	// Routing: which records are treated as WLCG packets.
+	// Enabled turns WLCG conversion on or off wholesale. When false no record and
+	// no gstream event is converted, whatever the routing rules below say, and
+	// everything is published in its native form on the regular exchanges.
+	// Defaults to true, matching the OSG upstream collector.
+	Enabled bool
+
+	// Routing: which records are treated as WLCG packets (ignored when disabled).
 	VOs          []string // case-insensitive exact match; defaults to ["cms"]
 	PathPrefixes []string // HasPrefix match; defaults to ["/store", "/user/dteam"]
 
@@ -111,6 +117,10 @@ type Config struct {
 	IpMapAll              string
 	IpMap                 map[string]string
 	Filter                FilterConfig
+
+	// VO names the VO this collector instance serves; empty (the default) leaves
+	// every record's VO exactly as the packet stream reported it.
+	VO string
 }
 
 func (c *Config) ReadConfig() {
@@ -365,12 +375,41 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 	// If the map is not set
 	c.IpMap = viper.GetStringMapString("map")
 
+	// wlcg.enabled is the master switch for WLCG conversion (collector mode only).
+	// Set it to false and no file-transfer record and no gstream event is converted
+	// to WLCG format: the routing rules below are never consulted and everything is
+	// published in its native form. Defaults to true so upstream behavior is
+	// unchanged unless a deployment opts out.
+	viper.SetDefault("wlcg.enabled", true)
+	c.WLCG.Enabled = viper.GetBool("wlcg.enabled")
+
 	// WLCG routing configuration (collector mode only)
 	// Defaults preserve current behavior: CMS VO and /store, /user/dteam paths.
 	viper.SetDefault("wlcg.vos", []string{"cms"})
 	viper.SetDefault("wlcg.path_prefixes", []string{"/store", "/user/dteam"})
+	// An explicitly empty list ("vos: []") disables that half of the routing rule.
+	// Viper returns nil only in that case - an absent key yields the default set
+	// above - so nil is normalized to an empty non-nil slice, which the correlator
+	// keeps as-is instead of substituting the defaults back in.
 	c.WLCG.VOs = viper.GetStringSlice("wlcg.vos")
+	if c.WLCG.VOs == nil {
+		c.WLCG.VOs = []string{}
+	}
 	c.WLCG.PathPrefixes = viper.GetStringSlice("wlcg.path_prefixes")
+	if c.WLCG.PathPrefixes == nil {
+		c.WLCG.PathPrefixes = []string{}
+	}
+
+	// vo names the VO this collector instance serves (collector mode only). Several
+	// collectors commonly publish into one broker and a record only carries a VO when
+	// the auth/token stream supplied one, so records arrive with nothing that says
+	// which instance produced them. When set, the value is written into the "vo"
+	// field of every record the collector emits, on the record itself rather than in
+	// the metadata block (MONIT rejects metadata fields it has no schema for).
+	// It has no default: unset leaves output byte-identical to upstream. It is
+	// applied after routing and filtering have run, so it cannot change which
+	// exchange a record lands on or whether it is dropped.
+	c.VO = strings.TrimSpace(viper.GetString("vo"))
 
 	// Record drop filter (collector mode only); defaults to drop nothing.
 	c.Filter.DropPathPrefixes = viper.GetStringSlice("filter.drop_path_prefixes")

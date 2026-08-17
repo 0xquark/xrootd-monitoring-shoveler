@@ -23,6 +23,9 @@ var recordsDropped = promauto.NewCounterVec(prometheus.CounterOpts{
 // matchesWLCG returns true when the record should be routed to the WLCG exchange.
 // It checks c.wlcgVOs (case-insensitive exact match) and c.wlcgPathPrefixes (HasPrefix).
 func (c *Correlator) matchesWLCG(record *CollectorRecord) bool {
+	if c.wlcgDisabled {
+		return false
+	}
 	return matchesWLCGWithRules(record, c.wlcgVOs, c.wlcgPathPrefixes)
 }
 

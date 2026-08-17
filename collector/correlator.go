@@ -153,12 +153,16 @@ type Correlator struct {
 	cancel                context.CancelFunc
 
 	// WLCG routing configuration
+	wlcgDisabled     bool
 	wlcgVOs          []string
 	wlcgPathPrefixes []string
 
 	// Record drop filter
 	dropPathPrefixes []string
 	dropVOs          []string
+
+	// Configured VO stamped onto every emitted record
+	vo string
 }
 
 // CorrelatorConfig holds configuration for the correlator including DNS enrichment
@@ -174,6 +178,11 @@ type CorrelatorConfig struct {
 	Scitags             *ScitagsRegistry // SciTags id->name resolver; defaults to the embedded snapshot when nil
 	Logger              *logrus.Logger
 
+	// DisableWLCG turns WLCG conversion off wholesale: no record is converted and
+	// the routing rules below are never consulted. It is expressed negatively so
+	// the zero value keeps the upstream behavior of converting matching records.
+	DisableWLCG bool
+
 	// WLCG routing: records matching any VO (case-insensitive) or path prefix are
 	// converted and routed to the WLCG exchange.
 	// If WLCGVOs/WLCGPathPrefixes are nil, defaults apply (["cms"], ["/store", "/user/dteam"]).
@@ -185,6 +194,11 @@ type CorrelatorConfig struct {
 	// silently dropped before any publish. Defaults to empty (drop nothing).
 	DropPathPrefixes []string
 	DropVOs          []string
+
+	// VO names the VO this collector instance serves. When set it becomes the VO of
+	// every emitted record, identifying the instance that produced it. Empty (the
+	// default) leaves each record's VO as the packet stream reported it.
+	VO string
 }
 
 // NewCorrelator creates a new correlator
@@ -250,10 +264,12 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		scitags:               config.Scitags,
 		ctx:                   ctx,
 		cancel:                cancel,
+		wlcgDisabled:          config.DisableWLCG,
 		wlcgVOs:               wlcgVOs,
 		wlcgPathPrefixes:      wlcgPathPrefixes,
 		dropPathPrefixes:      config.DropPathPrefixes,
 		dropVOs:               config.DropVOs,
+		vo:                    config.VO,
 	}
 
 	if config.EnableDNSEnrichment {
