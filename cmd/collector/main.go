@@ -289,6 +289,7 @@ func buildWLCGMetadata(config *shoveler.Config) collector.WLCGMetadata {
 		Producer:        config.WLCG.Producer,
 		Type:            config.WLCG.Type,
 		GStreamProducer: config.WLCG.GStreamProducer,
+		VO:              config.WLCG.VO,
 	}
 }
 

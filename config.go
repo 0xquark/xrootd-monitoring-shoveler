@@ -27,6 +27,7 @@ type WLCGConfig struct {
 	Producer        string // metadata.producer for file-transfer (file-close) records
 	Type            string // metadata.type for file-transfer records
 	GStreamProducer string // metadata.producer for gstream cache & TPC records
+	VO              string // overrides the "vo" field of every WLCG record; empty = keep the packet's VO
 }
 
 // ScitagsConfig configures the SciTags registry used (in collector mode) to
@@ -345,6 +346,16 @@ func (c *Config) ReadConfigWithPathAndPrefix(configPath string, envPrefix string
 	c.WLCG.Type = viper.GetString("wlcg.type")
 	viper.SetDefault("wlcg.gstream_producer", "cms-xrootd-cache")
 	c.WLCG.GStreamProducer = viper.GetString("wlcg.gstream_producer")
+	// wlcg.vo identifies which VO this collector instance serves. Several collectors
+	// usually publish to the same broker, and the records themselves carry no marker
+	// of their origin, so the value is written into the "vo" field of every WLCG
+	// record (file-transfer and gstream alike) for downstream consumers to route or
+	// filter on. It sits in the record body rather than the metadata block because
+	// MONIT rejects metadata fields it has no schema for. It has no default: when
+	// unset records keep the VO parsed from the auth/token stream. The override is
+	// applied at conversion time, after WLCG routing (wlcg.vos) and the drop filter
+	// (filter.drop_vos) have matched on the packet's own VO.
+	c.WLCG.VO = strings.TrimSpace(viper.GetString("wlcg.vo"))
 
 	// SciTags registry configuration (collector mode). By default the embedded
 	// api.json snapshot is used; set scitags.source to a file path or an

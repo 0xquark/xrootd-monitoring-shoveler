@@ -204,6 +204,12 @@ func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata) (*WLCGRecord, err
 		}
 	}
 
+	// A configured VO pins the record to the collector instance that produced it,
+	// replacing the VO derived from the auth/token stream.
+	if meta.VO != "" {
+		wlcg.VO = meta.VO
+	}
+
 	// Add metadata
 	hostname, _ := os.Hostname()
 	wlcg.Metadata = map[string]interface{}{
@@ -362,6 +368,12 @@ func ConvertGStreamToWLCG(event map[string]interface{}, isTPC bool, meta WLCGMet
 		TypePrefix: "raw",
 		Host:       hostname,
 		ID:         uuid.New().String(),
+	}
+
+	// Same collector VO tag as file-transfer records, on the event itself rather
+	// than in the metadata block.
+	if meta.VO != "" {
+		eventCopy["vo"] = meta.VO
 	}
 
 	return eventCopy, nil

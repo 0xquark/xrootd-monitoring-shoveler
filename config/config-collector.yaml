@@ -92,11 +92,25 @@ amqp:
 # here instead of editing the code. Values below are the defaults, matching the
 # OSG upstream collector (opensciencegrid/xrootd-monitoring-collector).
 # Equivalent environment variables: COLLECTOR_WLCG_PRODUCER, COLLECTOR_WLCG_TYPE,
-# COLLECTOR_WLCG_GSTREAM_PRODUCER.
+# COLLECTOR_WLCG_GSTREAM_PRODUCER, COLLECTOR_WLCG_VO.
+#
+# wlcg.vo names the VO this collector instance serves. When several collectors
+# publish to the same broker the records carry nothing that identifies which
+# instance produced them, so this value is written into the "vo" field of every
+# WLCG record (file-transfer records and gstream cache/TPC events) for consumers
+# to route or filter on. 
+# For Now, it goes in the record body, not the metadata block,
+# because MONIT rejects metadata fields it has no schema for.
+# It has no default: leave it unset and records keep the VO parsed from the
+# auth/token stream.
+# The override is applied when the record is converted, after WLCG routing
+# (wlcg.vos) and the drop filter (filter.drop_vos) have matched on the packet's
+# own VO. Those keep seeing the original value.
 #wlcg:
 #  producer: cms                      # producer for file-transfer (file-close) records
 #  type: aaa-ng                       # type for file-transfer records
 #  gstream_producer: cms-xrootd-cache # producer for gstream cache & TPC records
+#  vo: atlas                          # VO written into every WLCG record from this collector
 
 # The VO this collector instance serves (collector mode only).
 # Several collectors commonly publish into one broker, and a record only carries
