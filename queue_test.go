@@ -131,9 +131,11 @@ func corruptSegment(t *testing.T, queuePath string) (string, []byte) {
 		assert.NoError(t, err, "segment should be readable")
 		assert.NotEmpty(t, contents, "segment should hold at least one message")
 
-		// Keep the first few bytes so the file still looks like a segment, then
-		// cut it off part-way through the encoded value.
-		truncated := contents[:len(contents)/2]
+		// Drop the final byte so the last gob value is always incomplete. Cutting
+		// at an arbitrary fraction of the file could land on a record boundary and
+		// leave a perfectly valid stream, which would fail the test for the wrong
+		// reason.
+		truncated := contents[:len(contents)-1]
 		err = os.WriteFile(segment, truncated, 0600)
 		assert.NoError(t, err, "segment should be writable")
 		return segment, truncated
@@ -197,6 +199,11 @@ func TestCorruptSegmentPath(t *testing.T) {
 		{
 			name:     "real dque corruption error",
 			errMsg:   "unable to create queue segment in " + queueDir + ": unable to load queue segment in " + queueDir + ": segment file " + queueDir + "/0000000000988.dque is corrupted: error reading gob data from file: unexpected EOF",
+			expected: queueDir + "/0000000000988.dque",
+		},
+		{
+			name:     "extra whitespace before the corruption marker",
+			errMsg:   "segment file " + queueDir + "/0000000000988.dque  is corrupted: error reading gob data from file: unexpected EOF",
 			expected: queueDir + "/0000000000988.dque",
 		},
 		{

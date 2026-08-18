@@ -42,7 +42,10 @@ const maxCorruptSegments = 10
 
 // corruptSegmentPattern matches the segment path in a dque load error, e.g.
 // "segment file /var/spool/.../0000000000988.dque is corrupted: ...".
-var corruptSegmentPattern = regexp.MustCompile(`segment file (\S+\.dque) is corrupted`)
+// dque formats this with a single space (segment.go: "segment file %s is
+// corrupted: %s"), but the whitespace is matched loosely so the pattern still
+// holds if that text is ever reflowed or reformatted upstream.
+var corruptSegmentPattern = regexp.MustCompile(`segment file (\S+\.dque)\s+is corrupted`)
 
 // corruptSegmentPath extracts the corrupt segment path from a dque error, but
 // only when the file really sits inside queueDir. A path from anywhere else is
@@ -104,11 +107,11 @@ func openQueue(qName, qDir, queueDir string, segmentSize int) (*dque.DQue, error
 
 		target, renameErr := quarantineSegment(segment)
 		if renameErr != nil {
-			return nil, fmt.Errorf("failed to quarantine corrupt segment %s (%v): %w", segment, renameErr, err)
+			return nil, fmt.Errorf("failed to quarantine corrupt segment %s after open error %v: %w", segment, err, renameErr)
 		}
 
 		QueueSegmentsQuarantined.Inc()
-		log.Errorf("Corrupt queue segment %s moved to %s; its undelivered messages are lost, continuing with the rest of the queue", segment, target)
+		log.Errorf("Corrupt queue segment %s moved to %s; the messages it held will not be delivered, but the file is kept there for inspection. Continuing with the rest of the queue", segment, target)
 	}
 }
 
