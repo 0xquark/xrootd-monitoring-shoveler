@@ -56,6 +56,16 @@ var (
 		Help: "Current number of entries in the state map",
 	})
 
+	// QueueSegmentsQuarantined counts on-disk queue segments found corrupt at startup
+	// and moved aside so the queue could be opened. Each one means the messages in
+	// that segment were never delivered. A non-zero value points at the process being
+	// killed mid-write, or at something outside the collector pruning the queue
+	// directory (a queue under /tmp and systemd-tmpfiles, say).
+	QueueSegmentsQuarantined = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_queue_segments_quarantined_total",
+		Help: "Total number of corrupt on-disk queue segments moved aside at startup",
+	})
+
 	RecordsEmitted = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "shoveler_records_emitted",
 		Help: "The total number of collector records emitted",

@@ -6,7 +6,11 @@ import (
 	"github.com/joncrlsn/dque"
 
 	"errors"
+	"fmt"
+	"os"
 	"path"
+	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -30,6 +34,87 @@ var (
 	LowWaterMark = 50
 )
 
+// maxCorruptSegments bounds how many corrupt segments are moved aside during a
+// single startup. A queue directory that keeps producing corruption after this
+// many is not recoverable one file at a time, so we stop and surface the error
+// rather than deleting the whole spool a segment at a time.
+const maxCorruptSegments = 10
+
+// corruptSegmentPattern matches the segment path in a dque load error, e.g.
+// "segment file /var/spool/.../0000000000988.dque is corrupted: ...".
+// dque formats this with a single space (segment.go: "segment file %s is
+// corrupted: %s"), but the whitespace is matched loosely so the pattern still
+// holds if that text is ever reflowed or reformatted upstream.
+var corruptSegmentPattern = regexp.MustCompile(`segment file (\S+\.dque)\s+is corrupted`)
+
+// corruptSegmentPath extracts the corrupt segment path from a dque error, but
+// only when the file really sits inside queueDir. A path from anywhere else is
+// treated as no match: the error text is not something we want to turn into an
+// unbounded "rename any file on the box" primitive.
+func corruptSegmentPath(errMsg, queueDir string) string {
+	match := corruptSegmentPattern.FindStringSubmatch(errMsg)
+	if match == nil {
+		return ""
+	}
+
+	segment := filepath.Clean(match[1])
+	dir := filepath.Clean(queueDir)
+	if filepath.Dir(segment) != dir {
+		return ""
+	}
+
+	return segment
+}
+
+// quarantineSegment renames a corrupt segment out of the way so the queue can be
+// reopened without it. The file is kept (not deleted) next to the queue with a
+// .corrupt-<timestamp> suffix, so the undelivered messages can be inspected or
+// recovered by hand afterwards.
+func quarantineSegment(segment string) (string, error) {
+	target := fmt.Sprintf("%s.corrupt-%s", segment, time.Now().UTC().Format("20060102T150405Z"))
+	if err := os.Rename(segment, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// openQueue opens the on-disk queue, moving corrupt segments aside and retrying
+// rather than failing outright.
+//
+// A segment truncated by an abrupt process exit (or by anything pruning the
+// queue directory) makes dque.NewOrOpen fail forever: the collector panicked at
+// startup, systemd restarted it, and it panicked again on the same file, so a
+// single bad segment took the collector down permanently and every UDP packet
+// arriving meanwhile was lost. Losing the messages in one segment is bad;
+// losing the whole collector until someone notices is much worse.
+func openQueue(qName, qDir, queueDir string, segmentSize int) (*dque.DQue, error) {
+	for attempt := 0; ; attempt++ {
+		queue, err := dque.NewOrOpen(qName, qDir, segmentSize, ItemBuilder)
+		if err == nil {
+			return queue, nil
+		}
+
+		if attempt >= maxCorruptSegments {
+			return nil, fmt.Errorf("gave up after quarantining %d corrupt segments: %w", attempt, err)
+		}
+
+		segment := corruptSegmentPath(err.Error(), queueDir)
+		if segment == "" {
+			// Not a corrupt-segment failure (bad permissions, missing dir, ...);
+			// nothing to quarantine, so report it unchanged.
+			return nil, err
+		}
+
+		target, renameErr := quarantineSegment(segment)
+		if renameErr != nil {
+			return nil, fmt.Errorf("failed to quarantine corrupt segment %s after open error %v: %w", segment, err, renameErr)
+		}
+
+		QueueSegmentsQuarantined.Inc()
+		log.Errorf("Corrupt queue segment %s moved to %s; the messages it held will not be delivered, but the file is kept there for inspection. Continuing with the rest of the queue", segment, target)
+	}
+}
+
 // NewConfirmationQueue returns an initialized list.
 func NewConfirmationQueue(config *Config) *ConfirmationQueue {
 	return new(ConfirmationQueue).Init(config)
@@ -47,7 +132,7 @@ func (cq *ConfirmationQueue) Init(config *Config) *ConfirmationQueue {
 	qDir := path.Dir(config.QueueDir)
 	segmentSize := 10000
 	var err error
-	cq.diskQueue, err = dque.NewOrOpen(qName, qDir, segmentSize, ItemBuilder)
+	cq.diskQueue, err = openQueue(qName, qDir, config.QueueDir, segmentSize)
 	if err != nil {
 		log.Panicln("Failed to create queue:", err)
 	}
