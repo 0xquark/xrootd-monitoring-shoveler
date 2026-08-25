@@ -1580,3 +1580,70 @@ func TestPacketTypeName(t *testing.T) {
 		})
 	}
 }
+
+// TestServerIPLabelConsistency verifies that every server_ip value the collector
+// produces for one server is byte-identical, regardless of the wire form of the
+// address. An IPv4-mapped IPv6 peer such as "[::ffff:198.51.100.7]:1094" must not
+// show up as "198.51.100.7" on one metric and "::ffff:198.51.100.7" on another
+// that would break PromQL joins and aggregations by server_ip, and would stop the
+// emitted records from lining up with the metrics that count them.
+func TestServerIPLabelConsistency(t *testing.T) {
+	// All of these describe the same server and must canonicalize identically.
+	forms := []string{
+		"198.51.100.7:1094",
+		"[::ffff:198.51.100.7]:1094",
+		"::ffff:198.51.100.7",
+	}
+	const want = "198.51.100.7"
+
+	for _, form := range forms {
+		assert.Equal(t, want, canonicalServerIP(form), "canonicalServerIP(%q)", form)
+	}
+
+	// An absent address must not produce an empty label.
+	assert.Equal(t, "unknown", canonicalServerIP(""))
+
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	const remoteAddr = "[::ffff:198.51.100.7]:1094"
+
+	beforePackets := testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(want, "fstat"))
+	beforeOpen := testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(want))
+	beforeClose := testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(want))
+
+	openRec := parser.FileOpenRecord{
+		Header:   parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 70, UserId: 1},
+		FileSize: 2048,
+		Lfn:      []byte("/data/consistency.root"),
+	}
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 70, UserId: 1},
+		Xfr:    parser.StatXFR{Read: 2048},
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 7000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{openRec, closeRec},
+		RemoteAddr:  remoteAddr,
+	}
+
+	records, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	// The metric labels use the canonical form ...
+	assert.Equal(t, float64(1), testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(want, "fstat"))-beforePackets)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(want))-beforeOpen)
+	assert.Equal(t, float64(1), testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(want))-beforeClose)
+
+	// ... and so does the emitted record, which is what
+	// shoveler_records_emitted_by_server_total is labelled from.
+	assert.Equal(t, want, records[0].ServerIP, "record server_ip must match the metric label")
+
+	// gstream events carry the same canonical server_ip.
+	events, _, err := correlator.ProcessGStreamPacket(makeGStreamPacket(remoteAddr, 'C'))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, want, events[0]["server_ip"], "gstream server_ip must match the metric label")
+}
