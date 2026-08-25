@@ -1428,10 +1428,21 @@ func TestStandaloneCloseCounterNotIncrementedOnCorrelatedClose(t *testing.T) {
 		"correlated close must not increment the standalone counter")
 }
 
+// newPerServerMetricsCorrelator builds a correlator with the opt-in server_ip
+// metrics turned on. They are off by default (see Correlator.countByServer), so
+// any test that asserts on a server_ip-labelled counter must enable them.
+func newPerServerMetricsCorrelator() *Correlator {
+	return NewCorrelatorWithConfig(CorrelatorConfig{
+		TTL:              5 * time.Second,
+		MaxEntries:       0,
+		PerServerMetrics: true,
+	})
+}
+
 // TestFStreamFileOpenRecordsTotal verifies the fstream_file_open_records_total counter
 // increments once per FileOpen record seen in a packet's FileRecords.
 func TestFStreamFileOpenRecordsTotal(t *testing.T) {
-	correlator := NewCorrelator(5*time.Second, 0, nil)
+	correlator := newPerServerMetricsCorrelator()
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.1"
@@ -1459,7 +1470,7 @@ func TestFStreamFileOpenRecordsTotal(t *testing.T) {
 // TestFStreamFileCloseRecordsTotal verifies the fstream_file_close_records_total counter
 // increments once per FileClose record seen in a packet's FileRecords.
 func TestFStreamFileCloseRecordsTotal(t *testing.T) {
-	correlator := NewCorrelator(5*time.Second, 0, nil)
+	correlator := newPerServerMetricsCorrelator()
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.2"
@@ -1486,7 +1497,7 @@ func TestFStreamFileCloseRecordsTotal(t *testing.T) {
 // TestFStreamFileTimeRecordsTotal verifies the fstream_file_time_records_total counter
 // increments once per FileTime (TOD) record seen in a packet's FileRecords.
 func TestFStreamFileTimeRecordsTotal(t *testing.T) {
-	correlator := NewCorrelator(5*time.Second, 0, nil)
+	correlator := newPerServerMetricsCorrelator()
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.3"
@@ -1515,7 +1526,7 @@ func TestFStreamFileTimeRecordsTotal(t *testing.T) {
 // TestFStreamMixedRecordsCountedIndependently verifies that a packet containing
 // multiple record types increments each counter independently.
 func TestFStreamMixedRecordsCountedIndependently(t *testing.T) {
-	correlator := NewCorrelator(5*time.Second, 0, nil)
+	correlator := newPerServerMetricsCorrelator()
 	defer correlator.Stop()
 
 	serverIP := "127.0.0.4"
@@ -1603,7 +1614,7 @@ func TestServerIPLabelConsistency(t *testing.T) {
 	// An absent address must not produce an empty label.
 	assert.Equal(t, "unknown", canonicalServerIP(""))
 
-	correlator := NewCorrelator(5*time.Second, 0, nil)
+	correlator := newPerServerMetricsCorrelator()
 	defer correlator.Stop()
 
 	const remoteAddr = "[::ffff:198.51.100.7]:1094"
@@ -1646,4 +1657,63 @@ func TestServerIPLabelConsistency(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, want, events[0]["server_ip"], "gstream server_ip must match the metric label")
+}
+
+// TestPerServerMetricsDisabledByDefault verifies that the server_ip-labelled
+// metrics are opt-in: a correlator built without PerServerMetrics must not
+// create any series in those families, no matter how much traffic it sees.
+// This is what bounds their cardinality; see Correlator.countByServer.
+func TestPerServerMetricsDisabledByDefault(t *testing.T) {
+	// Default construction: PerServerMetrics is left unset.
+	correlator := NewCorrelator(5*time.Second, 0, nil)
+	defer correlator.Stop()
+
+	const serverIP = "203.0.113.9"
+
+	beforePackets := testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(serverIP, "fstat"))
+	beforeOpen := testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP))
+	beforeClose := testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP))
+	beforeTime := testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP))
+
+	openRec := parser.FileOpenRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeOpen, FileId: 80, UserId: 1},
+		Lfn:    []byte("/data/optout.root"),
+	}
+	timeRec := parser.FileTimeRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeTime, FileId: 81},
+		TBeg:   8000,
+		TEnd:   9000,
+		SID:    11,
+	}
+	closeRec := parser.FileCloseRecord{
+		Header: parser.FileHeader{RecType: parser.RecTypeClose, FileId: 80, UserId: 1},
+		Xfr:    parser.StatXFR{Read: 128},
+	}
+	packet := &parser.Packet{
+		Header:      parser.Header{Code: parser.PacketTypeFStat, ServerStart: 8000},
+		PacketType:  parser.PacketTypeFStat,
+		FileRecords: []interface{}{openRec, timeRec, closeRec},
+		RemoteAddr:  serverIP + ":1094",
+	}
+
+	_, err := correlator.ProcessPacket(packet)
+	require.NoError(t, err)
+
+	assert.Equal(t, beforePackets, testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(serverIP, "fstat")),
+		"packets_by_server must not be observed when per-server metrics are off")
+	assert.Equal(t, beforeOpen, testutil.ToFloat64(fileOpenRecordsTotal.WithLabelValues(serverIP)))
+	assert.Equal(t, beforeClose, testutil.ToFloat64(fileCloseRecordsTotal.WithLabelValues(serverIP)))
+	assert.Equal(t, beforeTime, testutil.ToFloat64(fileTimeRecordsTotal.WithLabelValues(serverIP)))
+
+	// gstream shares the same gate on the metric ...
+	beforeGStream := testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(serverIP, "gstream"))
+	events, _, err := correlator.ProcessGStreamPacket(makeGStreamPacket(serverIP+":1094", 'C'))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, beforeGStream, testutil.ToFloat64(packetsPerServerTotal.WithLabelValues(serverIP, "gstream")))
+
+	// ... but the emitted event still carries server_ip: turning the metric off
+	// must not strip data from the records the collector ships.
+	assert.Equal(t, serverIP, events[0]["server_ip"],
+		"event server_ip is data, not a metric label, and must survive the opt-out")
 }

@@ -63,9 +63,13 @@ var (
 
 	// RecordsEmittedByServer counts correlated file-access records published per upstream
 	// server IP.
+	//
+	// Opt-in via metrics.per_server; exports no series unless enabled, because the
+	// server_ip cardinality is set by the number of reporting XRootD servers and is
+	// unbounded from the collector's point of view.
 	RecordsEmittedByServer = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "shoveler_records_emitted_by_server_total",
-		Help: "Total number of collector records emitted, partitioned by upstream server IP",
+		Help: "Total number of collector records emitted, partitioned by upstream server IP (opt-in: metrics.per_server)",
 	}, []string{"server_ip"})
 
 	ParseTimeMs = promauto.NewHistogram(prometheus.HistogramOpts{
