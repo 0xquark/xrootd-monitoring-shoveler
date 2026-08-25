@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/opensciencegrid/xrootd-monitoring-shoveler/parser"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
 
@@ -212,6 +213,9 @@ type Correlator struct {
 	// Record drop filter
 	dropPathPrefixes []string
 	dropVOs          []string
+
+	// perServerMetrics gates the optional server_ip-labelled metrics
+	perServerMetrics bool
 }
 
 // CorrelatorConfig holds configuration for the correlator including DNS enrichment
@@ -251,6 +255,10 @@ type CorrelatorConfig struct {
 	WLCGPathPrefixes        []string
 	WLCGExcludeVOs          []string
 	WLCGExcludePathPrefixes []string
+
+	// PerServerMetrics enables the optional metrics labelled by server_ip.
+	// Off by default - see countByServer.
+	PerServerMetrics bool
 
 	// Drop filter: records matching any VO (case-insensitive) or path prefix are
 	// silently dropped before any publish. Defaults to empty (drop nothing).
@@ -328,6 +336,7 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 		wlcgRouting:           routing,
 		dropPathPrefixes:      config.DropPathPrefixes,
 		dropVOs:               config.DropVOs,
+		perServerMetrics:      config.PerServerMetrics,
 	}
 
 	if config.EnableDNSEnrichment {
@@ -401,8 +410,13 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 		return nil, nil
 	}
 
-	serverIP := canonicalServerIP(packet.RemoteAddr)
-	packetsPerServerTotal.WithLabelValues(serverIP, PacketTypeName(packet.PacketType)).Inc()
+	// serverIP only ever labels the optional per-server metrics here, so skip
+	// the address parse entirely when they are disabled.
+	var serverIP string
+	if c.perServerMetrics {
+		serverIP = canonicalServerIP(packet.RemoteAddr)
+	}
+	c.countByServer(packetsPerServerTotal, serverIP, PacketTypeName(packet.PacketType))
 
 	// Calculate server ID: serverStart#addr#port
 	serverID := c.getServerID(packet)
@@ -438,7 +452,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 	for _, rec := range packet.FileRecords {
 		switch r := rec.(type) {
 		case parser.FileOpenRecord:
-			fileOpenRecordsTotal.WithLabelValues(serverIP).Inc()
+			c.countByServer(fileOpenRecordsTotal, serverIP)
 			result, err := c.handleFileOpen(r, packet, serverID, windowBeg)
 			if err != nil {
 				return records, err
@@ -447,7 +461,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileCloseRecord:
-			fileCloseRecordsTotal.WithLabelValues(serverIP).Inc()
+			c.countByServer(fileCloseRecordsTotal, serverIP)
 			result, err := c.handleFileClose(r, packet, serverID, windowBeg, windowEnd)
 			if err != nil {
 				return records, err
@@ -456,7 +470,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 				records = append(records, result)
 			}
 		case parser.FileTimeRecord:
-			fileTimeRecordsTotal.WithLabelValues(serverIP).Inc()
+			c.countByServer(fileTimeRecordsTotal, serverIP)
 			// The window was already extracted above; the FileTOD record itself
 			// does not correlate to a file operation.
 		case parser.FileDisconnectRecord:
@@ -479,8 +493,10 @@ func (c *Correlator) ProcessGStreamPacket(packet *parser.Packet) ([]map[string]i
 		return nil, 0, nil
 	}
 
+	// Unlike ProcessPacket, serverIP is always needed here: it also populates the
+	// emitted event's server_ip field. Only the metric is optional.
 	serverIP := canonicalServerIP(packet.RemoteAddr)
-	packetsPerServerTotal.WithLabelValues(serverIP, "gstream").Inc()
+	c.countByServer(packetsPerServerTotal, serverIP, "gstream")
 
 	gstream := packet.GStreamRecord
 	serverID := c.getServerID(packet)
@@ -775,6 +791,27 @@ func canonicalServerIP(remoteAddr string) string {
 		return "unknown"
 	}
 	return ip
+}
+
+// countByServer increments a server_ip-labelled counter, but only when the
+// per-server metrics are enabled.
+//
+// These metrics are opt-in because their cardinality is set by the number of
+// XRootD servers reporting to this collector, which the collector cannot bound:
+// every new server that sends a packet creates a new series in each affected
+// family, and the series are never reclaimed for a server that goes away. A
+// large site can therefore grow the metric families without limit. Capping the
+// label count or tracking reporting servers in a side map both cost memory and
+// give unreliable numbers, so the breakdown is simply left off unless a site
+// asks for it via metrics.per_server.
+//
+// When disabled, nothing is ever observed and the families export no series at
+// all, so the server_ip label never reaches the registry.
+func (c *Correlator) countByServer(vec *prometheus.CounterVec, labelValues ...string) {
+	if !c.perServerMetrics {
+		return
+	}
+	vec.WithLabelValues(labelValues...).Inc()
 }
 
 // extractIPFromHost extracts the IP address from a host string

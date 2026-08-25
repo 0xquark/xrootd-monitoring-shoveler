@@ -143,9 +143,11 @@ func emitEnrichedRecord(msg collector.EnrichedRecord, output connectors.OutputCo
 }
 
 // publishEnrichedRecord handles the complete publish flow for a pipeline result (metrics + output)
-func publishEnrichedRecord(msg collector.EnrichedRecord, output connectors.OutputConnector, logger *logrus.Logger) {
+func publishEnrichedRecord(msg collector.EnrichedRecord, output connectors.OutputConnector, logger *logrus.Logger, perServerMetrics bool) {
 	shoveler.RecordsEmitted.Inc()
-	if msg.Record != nil {
+	// Opt-in for the same unbounded-cardinality reason as the correlator's
+	// server_ip metrics; see Correlator.countByServer.
+	if perServerMetrics && msg.Record != nil {
 		serverIP := msg.Record.ServerIP
 		if serverIP == "" {
 			serverIP = "unknown"
@@ -162,7 +164,7 @@ func publishEnrichedRecord(msg collector.EnrichedRecord, output connectors.Outpu
 	emitEnrichedRecord(msg, output, logger)
 }
 
-func startRecordPublisher(output connectors.OutputConnector, logger *logrus.Logger) (chan collector.EnrichedRecord, *sync.WaitGroup) {
+func startRecordPublisher(output connectors.OutputConnector, logger *logrus.Logger, perServerMetrics bool) (chan collector.EnrichedRecord, *sync.WaitGroup) {
 	records := make(chan collector.EnrichedRecord, 4096)
 	var publisherWG sync.WaitGroup
 	publisherWG.Add(1)
@@ -170,7 +172,7 @@ func startRecordPublisher(output connectors.OutputConnector, logger *logrus.Logg
 	go func() {
 		defer publisherWG.Done()
 		for record := range records {
-			publishEnrichedRecord(record, output, logger)
+			publishEnrichedRecord(record, output, logger, perServerMetrics)
 		}
 	}()
 
@@ -493,6 +495,7 @@ func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger 
 
 		DropPathPrefixes: config.Filter.DropPathPrefixes,
 		DropVOs:          config.Filter.DropVOs,
+		PerServerMetrics: config.MetricsPerServer,
 	}
 
 	return correlatorConfig
@@ -632,7 +635,7 @@ func runCollectorModeFile(ctx context.Context, config *shoveler.Config, output c
 	// Create correlator
 	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
-	recordDestination, publisherWG := startRecordPublisher(output, logger)
+	recordDestination, publisherWG := startRecordPublisher(output, logger, config.MetricsPerServer)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
 	enrichmentDestination := collector.EnrichmentDestination{
 		Results:      recordDestination,
@@ -678,7 +681,7 @@ func runCollectorModeUDP(ctx context.Context, config *shoveler.Config, output co
 	// Create correlator
 	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
-	recordDestination, publisherWG := startRecordPublisher(output, logger)
+	recordDestination, publisherWG := startRecordPublisher(output, logger, config.MetricsPerServer)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
 	enrichmentDestination := collector.EnrichmentDestination{
 		Results:      recordDestination,
@@ -724,7 +727,7 @@ func runCollectorModeRabbitMQ(ctx context.Context, config *shoveler.Config, outp
 	// Create correlator
 	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
-	recordDestination, publisherWG := startRecordPublisher(output, logger)
+	recordDestination, publisherWG := startRecordPublisher(output, logger, config.MetricsPerServer)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
 	enrichmentDestination := collector.EnrichmentDestination{
 		Results:      recordDestination,
