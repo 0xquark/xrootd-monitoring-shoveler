@@ -286,7 +286,7 @@ func (c *Correlator) ProcessPacket(packet *parser.Packet) ([]*CollectorRecord, e
 		return nil, nil
 	}
 
-	serverIP := extractIPFromHost(extractHostFromRemoteAddr(packet.RemoteAddr))
+	serverIP := canonicalServerIP(packet.RemoteAddr)
 	packetsPerServerTotal.WithLabelValues(serverIP, PacketTypeName(packet.PacketType)).Inc()
 
 	// Calculate server ID: serverStart#addr#port
@@ -364,7 +364,7 @@ func (c *Correlator) ProcessGStreamPacket(packet *parser.Packet) ([]map[string]i
 		return nil, 0, nil
 	}
 
-	serverIP := extractIPFromHost(extractHostFromRemoteAddr(packet.RemoteAddr))
+	serverIP := canonicalServerIP(packet.RemoteAddr)
 	packetsPerServerTotal.WithLabelValues(serverIP, "gstream").Inc()
 
 	gstream := packet.GStreamRecord
@@ -372,16 +372,14 @@ func (c *Correlator) ProcessGStreamPacket(packet *parser.Packet) ([]map[string]i
 
 	// Extract address from packet
 	addr := packet.RemoteAddr
-	host := extractHostFromRemoteAddr(addr)
 
 	// Resolve server hostname via DNS lookup (mirrors Python _determineHostname).
 	// lookupDNSHostname checks the cache first and, on a miss, performs a bounded
-	// reverse DNS lookup and caches the result.  Falls back to the raw IP when DNS
-	// is disabled or the lookup fails.
-	serverHostname := host
-	if isIPPattern(host) {
-		ipStr := extractIPFromHost(host)
-		if resolved := c.lookupDNSHostname(c.ctx, ipStr); resolved != "" {
+	// reverse DNS lookup and caches the result.  Falls back to the canonical IP when
+	// DNS is disabled or the lookup fails.
+	serverHostname := serverIP
+	if isIPPattern(serverIP) {
+		if resolved := c.lookupDNSHostname(c.ctx, serverIP); resolved != "" {
 			serverHostname = resolved
 		}
 	}
@@ -397,7 +395,9 @@ func (c *Correlator) ProcessGStreamPacket(packet *parser.Packet) ([]map[string]i
 
 		// Add server information
 		enrichedEvent["sid"] = serverID
-		enrichedEvent["server_ip"] = host
+		// serverIP (not the raw host) so the event's server_ip matches the
+		// server_ip metric labels and can be joined against them.
+		enrichedEvent["server_ip"] = serverIP
 		enrichedEvent["server_hostname"] = serverHostname
 		enrichedEvent["from"] = addr
 
@@ -633,6 +633,27 @@ func isIPPattern(s string) bool {
 	firstChar := s[0]
 	return firstChar == '[' || firstChar == ':' || firstChar == 'f' ||
 		(firstChar >= '0' && firstChar <= '9') || firstChar == '.'
+}
+
+// canonicalServerIP derives the canonical upstream-server IP from a packet's
+// RemoteAddr. This is the single source of truth for every "server_ip" value the
+// collector produces. The server_ip metric label on shoveler_packets_by_server_total,
+// shoveler_file_{open,close,time}_records_total and shoveler_records_emitted_by_server_total,
+// as well as the server_ip field on emitted collector records and gstream events.
+//
+// Deriving it in one place matters because the forms are not interchangeable: the
+// same server reaching us as "[::ffff:1.2.3.4]:1094" would otherwise appear as
+// "1.2.3.4" on one metric and "::ffff:1.2.3.4" on another, breaking PromQL joins
+// and aggregations by server_ip. Returns "unknown" when the address is absent.
+func canonicalServerIP(remoteAddr string) string {
+	if remoteAddr == "" {
+		return "unknown"
+	}
+	ip := extractIPFromHost(extractHostFromRemoteAddr(remoteAddr))
+	if ip == "" {
+		return "unknown"
+	}
+	return ip
 }
 
 // extractIPFromHost extracts the IP address from a host string
@@ -1230,18 +1251,19 @@ func (c *Correlator) createCorrelatedRecord(state *FileState, rec parser.FileClo
 	var needsServerDNS bool
 	var serverEnrichmentIP string
 	if packet.RemoteAddr != "" {
-		serverIP = extractHostFromRemoteAddr(packet.RemoteAddr)
+		// Same derivation as the server_ip metric labels so records and metrics
+		// can be correlated on server_ip.
+		serverIP = canonicalServerIP(packet.RemoteAddr)
 		serverHostname = serverIP
 
 		// Try DNS enrichment for server hostname
 		if isIPPattern(serverIP) {
-			ipStr := extractIPFromHost(serverIP)
-			hostname, needsAsync := c.enrichWithDNSSync(ipStr)
+			hostname, needsAsync := c.enrichWithDNSSync(serverIP)
 			if hostname != "" {
 				serverHostname = hostname
 			} else if needsAsync {
 				needsServerDNS = true
-				serverEnrichmentIP = ipStr
+				serverEnrichmentIP = serverIP
 			}
 		}
 	}
