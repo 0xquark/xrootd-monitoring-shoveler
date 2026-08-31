@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -116,8 +117,14 @@ func main() {
 		shoveler.StartProfile(config.ProfilePort)
 	}
 
+	// Root context for background workers (currently the CRIC site registry
+	// refresh loops). Cancelled when main returns so they stop cleanly instead of
+	// running until process exit.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Always run in collector mode
-	runCollectorMode(&config, output, logger)
+	runCollectorMode(ctx, &config, output, logger)
 }
 
 // emitEnrichedRecord handles outputting an already-enriched payload to the configured destination.
@@ -266,8 +273,56 @@ func buildWLCGMetadata(config *shoveler.Config) collector.WLCGMetadata {
 	}
 }
 
+// buildSiteRegistry constructs the CRIC-backed src/dst site resolver from
+// config. It always starts from the embedded CRIC domains snapshot; when a
+// source is configured it attempts to load it, and on failure keeps the embedded
+// data (fail-open). URL sources are refreshed in the background for the life of
+// the process. Returns nil when site resolution is disabled, which leaves
+// src_site/dst_site unset on the WLCG records that would otherwise carry them.
+func buildSiteRegistry(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) *collector.SiteRegistry {
+	if !config.Site.Enabled {
+		return nil
+	}
+	registry := collector.NewSiteRegistry(logger)
+
+	src := config.Site.Source
+	if src == "" {
+		return registry
+	}
+
+	if err := registry.LoadSource(ctx, src); err != nil {
+		logger.Warnf("Failed to load CRIC domains source %q, using embedded snapshot: %v", src, err)
+	}
+	registry.StartRefresh(ctx, src, time.Duration(config.Site.RefreshInterval)*time.Second)
+	return registry
+}
+
+// buildIPSiteRegistry constructs the CRIC netroutes resolver backing the "ip"
+// resolution method. It always starts from the embedded netroutes snapshot; when
+// a source is configured it attempts to load it, and on failure keeps the
+// embedded data (fail-open). URL sources are refreshed in the background for the
+// life of the process. Returns nil when site resolution or the IP method is
+// disabled, which drops "ip" from the resolution order.
+func buildIPSiteRegistry(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) *collector.IPSiteRegistry {
+	if !config.Site.Enabled || !config.Site.IPEnabled {
+		return nil
+	}
+	registry := collector.NewIPSiteRegistry(logger)
+
+	src := config.Site.IPSource
+	if src == "" {
+		return registry
+	}
+
+	if err := registry.LoadSource(ctx, src); err != nil {
+		logger.Warnf("Failed to load CRIC netroutes source %q, using embedded snapshot: %v", src, err)
+	}
+	registry.StartRefresh(ctx, src, time.Duration(config.Site.IPRefreshInterval)*time.Second)
+	return registry
+}
+
 // buildCorrelatorConfig creates a correlator config from the main config
-func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
+func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
 	ttl := time.Duration(config.State.EntryTTL) * time.Second
 
 	correlatorConfig := collector.CorrelatorConfig{
@@ -279,29 +334,36 @@ func buildCorrelatorConfig(config *shoveler.Config, logger *logrus.Logger) colle
 		EnrichmentWorkers:   config.State.EnrichmentWorkers,
 		EnrichmentQueueSize: config.State.EnrichmentQueueSize,
 		WLCGMetadata:        buildWLCGMetadata(config),
+		SiteRegistry:        buildSiteRegistry(ctx, config, logger),
+		SiteIPRegistry:      buildIPSiteRegistry(ctx, config, logger),
 		Logger:              logger,
-		WLCGVOs:             config.WLCG.VOs,
-		WLCGPathPrefixes:    config.WLCG.PathPrefixes,
-		DropPathPrefixes:    config.Filter.DropPathPrefixes,
-		DropVOs:             config.Filter.DropVOs,
+
+		SiteLocalSite:           config.Site.LocalSite,
+		SiteLocalSiteLANClients: config.Site.LocalSiteLANClients,
+		SiteResolutionOrder:     config.Site.ResolutionOrder,
+
+		WLCGVOs:          config.WLCG.VOs,
+		WLCGPathPrefixes: config.WLCG.PathPrefixes,
+		DropPathPrefixes: config.Filter.DropPathPrefixes,
+		DropVOs:          config.Filter.DropVOs,
 	}
 
 	return correlatorConfig
 }
 
 // runCollectorMode runs the collector mode with full packet parsing and correlation
-func runCollectorMode(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorMode(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Support UDP, file, and RabbitMQ inputs
 	switch config.Input.Type {
 	case "file":
-		runCollectorModeFile(config, output, logger)
+		runCollectorModeFile(ctx, config, output, logger)
 	case "rabbitmq", "amqp":
-		if err := runCollectorModeRabbitMQ(config, output, logger); err != nil {
+		if err := runCollectorModeRabbitMQ(ctx, config, output, logger); err != nil {
 			logger.Fatalln("Failed to run RabbitMQ collector:", err)
 		}
 	default:
 		// Default to UDP
-		runCollectorModeUDP(config, output, logger)
+		runCollectorModeUDP(ctx, config, output, logger)
 	}
 }
 
@@ -406,9 +468,9 @@ func processPackets(source input.PacketSource, correlator *collector.Correlator,
 }
 
 // runCollectorModeFile processes packets from a file in collector mode
-func runCollectorModeFile(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorModeFile(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
@@ -452,9 +514,9 @@ func runCollectorModeFile(config *shoveler.Config, output connectors.OutputConne
 }
 
 // runCollectorModeUDP processes packets from UDP in collector mode
-func runCollectorModeUDP(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
+func runCollectorModeUDP(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
@@ -498,9 +560,9 @@ func runCollectorModeUDP(config *shoveler.Config, output connectors.OutputConnec
 }
 
 // runCollectorModeRabbitMQ processes packets from RabbitMQ in collector mode
-func runCollectorModeRabbitMQ(config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) error {
+func runCollectorModeRabbitMQ(ctx context.Context, config *shoveler.Config, output connectors.OutputConnector, logger *logrus.Logger) error {
 	// Create correlator
-	correlatorConfig := buildCorrelatorConfig(config, logger)
+	correlatorConfig := buildCorrelatorConfig(ctx, config, logger)
 	correlator := collector.NewCorrelatorWithConfig(correlatorConfig)
 	recordDestination, publisherWG := startRecordPublisher(output, logger)
 	gstreamPackets, gstreamWG, gstreamDropCount := startGStreamWorkers(correlator, config, output, logger)
