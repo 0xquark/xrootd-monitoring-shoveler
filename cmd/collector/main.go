@@ -298,6 +298,53 @@ func buildSiteRegistry(ctx context.Context, config *shoveler.Config, logger *log
 	return registry
 }
 
+// buildSiteOverrides constructs the site pins from site.overrides. They are
+// consulted before every CRIC lookup and are used, so they are used behind
+// site.overrides_enabled, which defaults to false: a collector must opt in to
+// overruling CRIC. Returns nil when site resolution or the option is off, which
+// disables overriding entirely.
+//
+// Pins configured while the option is off are a silent no-op, which is exactly the
+// kind of thing a site debugging a wrong site label would waste an hour on,
+// so say so at startup.
+func buildSiteOverrides(config *shoveler.Config, logger *logrus.Logger) *collector.SiteOverrides {
+	if !config.Site.Enabled {
+		return nil
+	}
+	if !config.Site.OverridesEnabled {
+		if len(config.Site.Overrides) > 0 {
+			logger.Warnf("site: %d override(s) configured but site.overrides_enabled is false; "+
+				"ignoring them and resolving from CRIC alone", len(config.Site.Overrides))
+		}
+		return nil
+	}
+	return collector.NewSiteOverrides(config.Site.Overrides, logger)
+}
+
+// buildHostSiteRegistry constructs the CRIC SE endpoint resolver backing the
+// "hostname" resolution method. It always starts from the embedded SE snapshot;
+// when a source is configured it attempts to load it, and on failure keeps the
+// embedded data (fail-open). URL sources are refreshed in the background for the
+// life of the process. Returns nil when site resolution or the hostname method
+// is disabled, which drops "hostname" from the resolution order.
+func buildHostSiteRegistry(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) *collector.HostSiteRegistry {
+	if !config.Site.Enabled || !config.Site.HostnameEnabled {
+		return nil
+	}
+	registry := collector.NewHostSiteRegistry(logger)
+
+	src := config.Site.HostnameSource
+	if src == "" {
+		return registry
+	}
+
+	if err := registry.LoadSource(ctx, src); err != nil {
+		logger.Warnf("Failed to load CRIC SE source %q, using embedded snapshot: %v", src, err)
+	}
+	registry.StartRefresh(ctx, src, time.Duration(config.Site.HostnameRefreshInterval)*time.Second)
+	return registry
+}
+
 // buildIPSiteRegistry constructs the CRIC netroutes resolver backing the "ip"
 // resolution method. It always starts from the embedded netroutes snapshot; when
 // a source is configured it attempts to load it, and on failure keeps the
@@ -327,10 +374,12 @@ func buildIPSiteRegistry(ctx context.Context, config *shoveler.Config, logger *l
 // both need a name, and the two endpoints differ in where a name comes from:
 // the client name arrives in the xrootd user record and is usable as-is, but the
 // server end is derived from the packet's RemoteAddr and is therefore always an
-// IP literal — DNS enrichment is the only thing that turns it into a name, and
-// the domain map deliberately refuses to match IP literals. With DNS off those
-// methods are silently inert for every server endpoint, and the resulting
-// no_host rate reads like poor CRIC coverage rather than a configuration gap.
+// IP literal, which the domain map deliberately refuses to match. DNS enrichment
+// is the only thing that turns it into a name.
+//
+// This does not strand the server end — "config" and "ip" both still resolve an
+// address — so the warning says which methods are left rather than implying
+// nothing works.
 //
 // It stays quiet when "config" can already answer for the server end, which is
 // the recommended setup: every server reporting to this collector is at
@@ -357,8 +406,10 @@ func warnInertNameMethods(config *shoveler.Config, logger *logrus.Logger) {
 	}
 
 	logger.Warnf("site: resolution_order includes %q but state.enable_dns_enrichment is false, "+
-		"so the server endpoint stays an IP literal and those methods can only ever resolve the client end. "+
-		"Set site.local_site to resolve the server end without DNS, or enable state.enable_dns_enrichment.",
+		"so the server endpoint stays an IP literal and only the config and ip methods can resolve it. "+
+		"A server address outside every CRIC netroute CIDR will not resolve at all. "+
+		"Set site.local_site for a certain answer, or enable state.enable_dns_enrichment so the "+
+		"name-based methods have a host name to match.",
 		strings.Join(inert, ", "))
 }
 
@@ -378,6 +429,8 @@ func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger 
 		EnrichmentQueueSize: config.State.EnrichmentQueueSize,
 		WLCGMetadata:        buildWLCGMetadata(config),
 		SiteRegistry:        buildSiteRegistry(ctx, config, logger),
+		SiteOverrides:       buildSiteOverrides(config, logger),
+		SiteHostRegistry:    buildHostSiteRegistry(ctx, config, logger),
 		SiteIPRegistry:      buildIPSiteRegistry(ctx, config, logger),
 		Logger:              logger,
 

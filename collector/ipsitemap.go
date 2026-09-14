@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -173,6 +174,52 @@ func (r *IPSiteRegistry) ResolveIP(ip net.IP) (site string, status string) {
 	default:
 		return winner, SiteStatusResolvedIP
 	}
+}
+
+// Candidates returns every RCSite that ties at the most-specific block containing
+// ip, or nil when fewer than two do. It exists for reporting an ambiguous match;
+// use ResolveIP to resolve, which applies the status rules.
+func (r *IPSiteRegistry) Candidates(ip net.IP) []string {
+	if ip == nil {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	bestLen := -1
+	var sites []string
+	for _, rt := range r.routes {
+		if !rt.net.Contains(ip) {
+			continue
+		}
+		ones, _ := rt.net.Mask.Size()
+		switch {
+		case ones > bestLen:
+			bestLen = ones
+			sites = []string{rt.site}
+		case ones == bestLen:
+			sites = append(sites, rt.site)
+		}
+	}
+	if len(sites) < 2 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(sites))
+	unique := make([]string, 0, len(sites))
+	for _, site := range sites {
+		if _, dup := seen[site]; dup {
+			continue
+		}
+		seen[site] = struct{}{}
+		unique = append(unique, site)
+	}
+	if len(unique) < 2 {
+		return nil
+	}
+	sort.Strings(unique)
+	return unique
 }
 
 // LoadSource fetches and loads a CRIC netroutes document from a file path or an

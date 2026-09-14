@@ -23,6 +23,12 @@ const syntheticNetroutes = `{
   "SITE-IP": {"netroutes": {"main": {"networks": {"ipv4": ["192.0.2.0/24"]}}}}
 }`
 
+// syntheticSE lists the same full host as a CRIC SE protocol endpoint, which is
+// what the hostname method matches on (no longer the domains-map exact key).
+const syntheticSE = `{
+  "SE-EXACT": {"rcsite": "SITE-EXACT", "protocols": {"p": {"endpoint": "root://exact.example.org:1094"}}}
+}`
+
 // syntheticSharedDomains maps one suffix to two sites, for the ambiguous case.
 const syntheticSharedDomains = `{
   "shared.example.net": ["SITE-FIRST", "SITE-SECOND"]
@@ -35,10 +41,12 @@ func newOrderedEnricher(t *testing.T, order []string) *siteRecordEnricher {
 
 	domains := NewSiteRegistry(newSiteTestLogger())
 	require.NoError(t, domains.Load([]byte(syntheticDomains)))
+	hosts := NewHostSiteRegistry(newSiteTestLogger())
+	require.NoError(t, hosts.Load([]byte(syntheticSE)))
 	ips := NewIPSiteRegistry(newSiteTestLogger())
 	require.NoError(t, ips.Load([]byte(syntheticNetroutes)))
 
-	return &siteRecordEnricher{domains: domains, ips: ips, order: order}
+	return &siteRecordEnricher{domains: domains, hosts: hosts, ips: ips, order: order}
 }
 
 // TestSiteResolutionOrderDecidesWinner verifies that the configured order, not
@@ -53,7 +61,7 @@ func TestSiteResolutionOrderDecidesWinner(t *testing.T) {
 		wantSite string
 		wantStat string
 	}{
-		{"hostname first", []string{SiteMethodHostname, SiteMethodIP, SiteMethodDomain}, "SITE-EXACT", SiteStatusResolved},
+		{"hostname first", []string{SiteMethodHostname, SiteMethodIP, SiteMethodDomain}, "SITE-EXACT", SiteStatusResolvedHostname},
 		{"ip first", []string{SiteMethodIP, SiteMethodHostname, SiteMethodDomain}, "SITE-IP", SiteStatusResolvedIP},
 		{"domain first", []string{SiteMethodDomain, SiteMethodHostname, SiteMethodIP}, "SITE-EXACT", SiteStatusResolved},
 		{"ip only", []string{SiteMethodIP}, "SITE-IP", SiteStatusResolvedIP},
@@ -103,7 +111,7 @@ func TestSiteLocalSiteResolvesServer(t *testing.T) {
 	e.localSite = ""
 	e.Enrich(ctx, rec)
 	assert.Equal(t, "SITE-EXACT", rec.srcSite)
-	assert.Equal(t, SiteStatusResolved, rec.srcSiteStatus)
+	assert.Equal(t, SiteStatusResolvedHostname, rec.srcSiteStatus)
 }
 
 // TestSiteLocalSiteLANClients verifies that a client on a private address is
@@ -206,28 +214,32 @@ func TestNormalizeSiteResolutionOrder(t *testing.T) {
 	assert.Equal(t, []string{SiteMethodConfig}, NormalizeSiteResolutionOrder([]string{"config"}, logger))
 }
 
-// TestSiteRegistryResolveExactHost verifies the hostname method matches only the
-// full host name, leaving the broader suffixes to the domain method.
-func TestSiteRegistryResolveExactHost(t *testing.T) {
+// TestSiteRegistryDomainWalkPrefersExactKey verifies the domain method's walk
+// starts at the full host name, so an exact key in the domains map still wins
+// over its parent suffix. This is the coverage the removed ResolveExactHost
+// helper used to carry: the "hostname" method now matches CRIC SE endpoints, and
+// nothing else needed an exact-only lookup on the domain map.
+func TestSiteRegistryDomainWalkPrefersExactKey(t *testing.T) {
 	r := NewSiteRegistry(newSiteTestLogger())
 	require.NoError(t, r.Load([]byte(syntheticDomains)))
 
-	site, status := r.ResolveExactHost("exact.example.org")
+	// The full host is itself a key and must beat the parent suffix.
+	site, status := r.ResolveHost("exact.example.org")
 	assert.Equal(t, "SITE-EXACT", site)
 	assert.Equal(t, SiteStatusResolved, status)
 
-	// The parent suffix is a key, but this is not an exact match.
-	site, status = r.ResolveExactHost("other.example.org")
-	assert.Empty(t, site)
-	assert.Equal(t, SiteStatusUnknown, status)
-
-	// A two-label host that is itself a key still matches exactly.
-	site, status = r.ResolveExactHost("example.org")
+	// No exact key, so the walk falls back to the parent suffix.
+	site, status = r.ResolveHost("other.example.org")
 	assert.Equal(t, "SITE-SUFFIX", site)
 	assert.Equal(t, SiteStatusResolved, status)
 
-	// Unusable hosts are rejected the same way as in ResolveHost.
-	site, status = r.ResolveExactHost("192.0.2.5")
+	// A two-label host that is itself a key still matches.
+	site, status = r.ResolveHost("example.org")
+	assert.Equal(t, "SITE-SUFFIX", site)
+	assert.Equal(t, SiteStatusResolved, status)
+
+	// Unusable hosts are rejected before any lookup.
+	site, status = r.ResolveHost("192.0.2.5")
 	assert.Empty(t, site)
 	assert.Equal(t, SiteStatusNoHost, status)
 }
