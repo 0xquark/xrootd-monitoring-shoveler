@@ -291,3 +291,70 @@ func TestSiteResolutionDisabled(t *testing.T) {
 
 	assert.Empty(t, c.enrichers, "no enrichers without DNS or site resolution")
 }
+
+// TestSiteRegistryEmptySiteListNoPanic covers a domains document that lists a
+// suffix with no sites. Such an entry is dropped at load, and the suffix walk
+// treats it as no match at all rather than indexing an empty slice — the
+// collector installs no recover(), so this would otherwise take the process down
+// from an enrichment worker on operator-supplied site.source data.
+func TestSiteRegistryEmptySiteListNoPanic(t *testing.T) {
+	r := &SiteRegistry{logger: newSiteTestLogger(), domains: map[string][]string{}}
+
+	// The empty entry is dropped at load; only the usable one survives.
+	require.NoError(t, r.Load([]byte(`{"example.org": [], "sub.example.org": ["SITE-A"]}`)))
+	site, status := r.ResolveHost("host.sub.example.org")
+	assert.Equal(t, SiteStatusResolved, status)
+	assert.Equal(t, "SITE-A", site)
+
+	// The suffix with the empty list must not match, and must not panic.
+	assert.NotPanics(t, func() {
+		site, status = r.ResolveHost("host.example.org")
+	})
+	assert.Equal(t, SiteStatusUnknown, status)
+	assert.Empty(t, site)
+
+	// Defence in depth: even a map built without Load must not panic.
+	direct := &SiteRegistry{logger: newSiteTestLogger(), domains: map[string][]string{"example.org": {}}}
+	assert.NotPanics(t, func() {
+		site, status = direct.ResolveHost("host.example.org")
+	})
+	assert.Equal(t, SiteStatusUnknown, status)
+	assert.Empty(t, site)
+}
+
+// TestSiteRegistryLoadDegenerateKeepsPreviousMap covers the fail-open contract
+// for a document that is non-empty as JSON but yields no usable entries. It must
+// be rejected and leave the working map in place, exactly like a parse error.
+func TestSiteRegistryLoadDegenerateKeepsPreviousMap(t *testing.T) {
+	for name, doc := range map[string]string{
+		"blank and dot keys": `{"": ["SITE-A"], ".": ["SITE-B"]}`,
+		"only empty lists":   `{"example.org": [], "example.net": []}`,
+		"only blank sites":   `{"example.org": ["", "   "]}`,
+		"empty object":       `{}`,
+		"json null":          `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := NewSiteRegistry(newSiteTestLogger())
+			before, statusBefore := r.ResolveHost("eosatlas.cern.ch")
+			require.Equal(t, SiteStatusResolved, statusBefore)
+
+			require.Error(t, r.Load([]byte(doc)), "degenerate document must be rejected")
+
+			after, statusAfter := r.ResolveHost("eosatlas.cern.ch")
+			assert.Equal(t, statusBefore, statusAfter, "a rejected load must not wipe the map")
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
+// TestSiteRegistryLoadTrimsBlankSites verifies blank site names are dropped from
+// an otherwise usable entry, so a partially blank list cannot make a resolved
+// answer an empty string.
+func TestSiteRegistryLoadTrimsBlankSites(t *testing.T) {
+	r := &SiteRegistry{logger: newSiteTestLogger(), domains: map[string][]string{}}
+	require.NoError(t, r.Load([]byte(`{"example.org": ["", " SITE-A ", "  "]}`)))
+
+	site, status := r.ResolveHost("host.example.org")
+	assert.Equal(t, SiteStatusResolved, status, "one real site left means resolved, not ambiguous")
+	assert.Equal(t, "SITE-A", site)
+}

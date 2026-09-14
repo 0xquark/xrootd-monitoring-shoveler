@@ -32,7 +32,7 @@ var embeddedCRICDomains []byte
 
 // Site resolution status values recorded per endpoint. They make the UNKNOWN
 // rate measurable end to end and are also exported via the
-// shoveler_site_unresolved_total metric (labelled by role and reason).
+// shoveler_site_unresolved metric (labelled by role and reason).
 const (
 	SiteStatusResolved       = "resolved"        // exactly one RCSite matched in the domains map
 	SiteStatusResolvedConfig = "resolved_config" // taken from the configured local site (site.local_site)
@@ -129,23 +129,44 @@ func NewSiteRegistry(logger *logrus.Logger) *SiteRegistry {
 }
 
 // Load parses a CRIC domains document and atomically swaps in the new map. A
-// parse error or an empty map leaves the current registry untouched so a
-// transient bad fetch never wipes a good in-memory map.
+// parse error, or a document that yields no usable entries, leaves the current
+// registry untouched so a transient bad fetch never wipes a good in-memory map.
+//
+// Entries are sanitized as they are read: a blank suffix, a blank site name, and
+// a suffix whose site list ends up empty all carry no resolvable information and
+// are dropped. That keeps the map free of entries resolveHost could match but not
+// answer from, and makes the shoveler_site_registry_domains count mean "suffixes
+// that can actually resolve".
 func (r *SiteRegistry) Load(data []byte) error {
 	var doc map[string][]string
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("parse CRIC domains: %w", err)
 	}
-	if len(doc) == 0 {
-		return fmt.Errorf("CRIC domains map is empty")
-	}
 
 	domains := make(map[string][]string, len(doc))
 	for suffix, sites := range doc {
 		key := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(suffix), "."))
-		if key != "" {
-			domains[key] = sites
+		if key == "" {
+			continue
 		}
+		cleaned := make([]string, 0, len(sites))
+		for _, site := range sites {
+			if s := strings.TrimSpace(site); s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		domains[key] = cleaned
+	}
+
+	// Emptiness is checked *after* normalization, not before. A document that is
+	// non-empty as JSON but whose every entry drops out here (blank keys, empty
+	// site lists) is exactly as unusable as an empty one, and swapping it in would
+	// wipe a good map — the opposite of the fail-open contract above.
+	if len(domains) == 0 {
+		return fmt.Errorf("CRIC domains map has no usable entries")
 	}
 
 	r.mu.Lock()
@@ -197,7 +218,12 @@ func (r *SiteRegistry) resolveHost(host string, exactOnly bool) (site string, st
 	for i := 0; i < steps; i++ {
 		suffix := strings.Join(labels[i:], ".")
 		sites, ok := r.domains[suffix]
-		if !ok {
+		// An empty site list is treated as no match at all, so the walk continues
+		// to a broader suffix. Load drops such entries, so this is defence in
+		// depth — but the package installs no recover(), so indexing sites[0] on a
+		// zero-length list would take the whole process down from an enrichment
+		// worker, and a configured site.source is operator-supplied data.
+		if !ok || len(sites) == 0 {
 			continue
 		}
 		if len(sites) == 1 {
@@ -511,15 +537,15 @@ func worseSiteFailure(current, candidate siteResolution) siteResolution {
 // and any non-resolved outcome is counted by reason.
 func recordSiteMetric(role string, res siteResolution) {
 	if res.method != "" {
-		siteResolvedByMethodTotal.WithLabelValues(role, res.method).Inc()
+		siteResolvedByMethod.WithLabelValues(role, res.method).Inc()
 	}
 	switch res.status {
 	case SiteStatusResolved, SiteStatusResolvedConfig:
 		// resolved by the operator's declaration or the domain map; not counted.
 	case SiteStatusResolvedIP:
-		siteResolvedByIPTotal.WithLabelValues(role).Inc()
+		siteResolvedByIP.WithLabelValues(role).Inc()
 	default:
-		siteUnresolvedTotal.WithLabelValues(role, res.status).Inc()
+		siteUnresolved.WithLabelValues(role, res.status).Inc()
 	}
 }
 
