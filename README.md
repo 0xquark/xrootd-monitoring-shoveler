@@ -317,6 +317,16 @@ declaration first (nothing inferred beats it, and it needs no DNS), then the
 identifiers from most to least specific. Leaving a method out of the list turns
 it off.
 
+> **`hostname` and `domain` need a name, and the server end only has one with DNS
+> enrichment on.** The client name arrives in the xrootd user record and is used
+> as-is, but the server end is derived from the packet's source address and is
+> always an IP literal, which the domain map deliberately refuses to match. Since
+> `state.enable_dns_enrichment` defaults to `false`, both name-based methods are
+> inert for *every server endpoint* under the shipped defaults, leaving `config`
+> and `ip` to resolve that end. The collector warns at startup when the order
+> asks for a name-based method that DNS has made inert, and stays quiet once
+> either of those is in place.
+
 **If your collector serves a single site, set `site.local_site`.** It is the one
 thing you know for certain — every server reporting to that collector is at that
 site — and it resolves the server end with no DNS and no CRIC coverage
@@ -728,11 +738,11 @@ The shoveler exports Prometheus metrics for monitoring. Common metrics include:
 **Note:** The enrichment queue grows lazily in memory up to `COLLECTOR_STATE_ENRICHMENT_QUEUE_SIZE`; `1000000` queued request descriptors are about `32 MiB`, but the retained `CollectorRecord` objects are much larger and can exceed `600 MiB` before counting string data.
 - `shoveler_ttl_evictions` - State entries evicted due to TTL
 - `shoveler_records_emitted` - Collector records emitted
-- `shoveler_site_resolved_by_method_total{role,method}` - Transfer endpoints resolved to an RCSite, by which resolution method produced it
-- `shoveler_site_unresolved_total{role,reason}` - Transfer endpoints no method could resolve, by reason
-- `shoveler_site_resolved_by_ip_total{role}` - Endpoints resolved via CRIC netroutes CIDR containment
+- `shoveler_site_resolved_by_method{role,method}` - Transfer endpoints resolved to an RCSite, by which resolution method produced it
+- `shoveler_site_unresolved{role,reason}` - Transfer endpoints no method could resolve, by reason
+- `shoveler_site_resolved_by_ip{role}` - Endpoints resolved via CRIC netroutes CIDR containment
 - `shoveler_site_registry_domains` / `shoveler_site_ip_routes` - Size of the currently loaded CRIC domain map / route table
-- `shoveler_site_registry_reload_failures_total` / `shoveler_site_ip_reload_failures_total` - Failed background refreshes (previous data retained)
+- `shoveler_site_registry_reload_failures` / `shoveler_site_ip_reload_failures` - Failed background refreshes (previous data retained)
 - `shoveler_parse_time_ms` - Packet parsing time histogram
 - `shoveler_request_latency_ms` - Request latency histogram
 
