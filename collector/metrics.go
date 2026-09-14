@@ -20,10 +20,18 @@ var (
 
 	// siteRegistryDomains reports how many domain suffixes the currently loaded
 	// CRIC domains map knows about. A value of 0 means every host resolves to
-	// unknown_domain (the name-based resolution methods are effectively off).
+	// unknown_domain (the "domain" resolution method is effectively off).
 	siteRegistryDomains = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "shoveler_site_registry_domains",
 		Help: "Number of domain suffixes in the currently loaded CRIC domains map",
+	})
+
+	// siteRegistryHosts reports how many unique hosts the currently loaded CRIC
+	// SE endpoint map knows about. A value of 0 means the "hostname" method is
+	// effectively off.
+	siteRegistryHosts = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "shoveler_site_registry_hosts",
+		Help: "Number of unique hosts in the currently loaded CRIC SE endpoint map",
 	})
 
 	// siteRegistryReloadFailures counts background refresh attempts that failed;
@@ -32,6 +40,13 @@ var (
 	siteRegistryReloadFailures = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "shoveler_site_registry_reload_failures",
 		Help: "Total number of CRIC domains map background refresh attempts that failed",
+	})
+
+	// siteHostnameReloadFailures counts CRIC SE background refresh attempts that
+	// failed; on failure the previous host map is retained.
+	siteHostnameReloadFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_site_hostname_reload_failures",
+		Help: "Total number of CRIC SE endpoint map background refresh attempts that failed",
 	})
 
 	// siteUnresolved counts transfer endpoints that no configured resolution
@@ -67,8 +82,9 @@ var (
 
 	// siteResolvedByMethod counts endpoints resolved to an RCSite by role
 	// (src/dst) and by which step of site.resolution_order produced the answer
-	// (config, hostname, ip, domain). It shows what each step actually
-	// contributes, which is what tuning the order needs.
+	// (config, hostname, ip, domain). hostname is an exact CRIC SE endpoint match;
+	// domain is a suffix match. It shows what each step actually contributes,
+	// which is what tuning the order needs.
 	siteResolvedByMethod = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "shoveler_site_resolved_by_method",
 		Help: "Total number of transfer endpoints resolved to an RCSite, by role and resolution method",

@@ -86,11 +86,13 @@ type CollectorRecord struct {
 	// record only, so the plain collector record keeps its existing shape.
 	//
 	// srcSite/dstSite are the WLCG RCSite names of the transfer's source and
-	// destination endpoints, resolved from the configured local site, the CRIC
-	// domains map and the CRIC IP ranges (in site.resolution_order) and ordered by
-	// data-flow direction (read: src=server, dst=client; write: inverted).
+	// destination endpoints, resolved from the configured local site, the CRIC SE
+	// endpoints, the CRIC domains map and the CRIC IP ranges (in
+	// site.resolution_order) and ordered by data-flow direction (read: src=server,
+	// dst=client; write: inverted).
 	// srcSiteStatus/dstSiteStatus record the per-endpoint resolution outcome
-	// (resolved_config/resolved/resolved_ip, or ambiguous/unknown_domain/no_host)
+	// (resolved_config/resolved_hostname/resolved/resolved_ip, or
+	// ambiguous/unknown_domain/no_host)
 	// so the UNKNOWN rate stays measurable. A site is empty unless its status is
 	// one of the resolved ones or "ambiguous", which names the first of the
 	// several sites the endpoint matched and must be read as a guess.
@@ -185,11 +187,13 @@ type CorrelatorConfig struct {
 	EnableDNSEnrichment bool
 	DNSCacheTTL         time.Duration
 	DNSTimeout          time.Duration
-	EnrichmentWorkers   int             // Number of enrichment worker goroutines (default: 5)
-	EnrichmentQueueSize int             // Maximum number of pending enrichment requests (default: 1000000)
-	WLCGMetadata        WLCGMetadata    // producer/type values used in WLCG records
-	SiteRegistry        *SiteRegistry   // src/dst RCSite resolver; nil disables src_site/dst_site resolution
-	SiteIPRegistry      *IPSiteRegistry // CRIC netroutes resolver backing the "ip" method; nil drops that method
+	EnrichmentWorkers   int               // Number of enrichment worker goroutines (default: 5)
+	EnrichmentQueueSize int               // Maximum number of pending enrichment requests (default: 1000000)
+	WLCGMetadata        WLCGMetadata      // producer/type values used in WLCG records
+	SiteRegistry        *SiteRegistry     // src/dst RCSite resolver; nil disables src_site/dst_site resolution
+	SiteOverrides       *SiteOverrides    // operator pins consulted before every CRIC lookup; nil disables overriding
+	SiteHostRegistry    *HostSiteRegistry // CRIC SE endpoint resolver backing the "hostname" method; nil drops that method
+	SiteIPRegistry      *IPSiteRegistry   // CRIC netroutes resolver backing the "ip" method; nil drops that method
 	Logger              *logrus.Logger
 
 	// Site resolution tuning. SiteLocalSite is the RCSite this collector runs at,
@@ -282,13 +286,17 @@ func NewCorrelatorWithConfig(config CorrelatorConfig) *Correlator {
 
 	if config.SiteRegistry != nil {
 		// Registered after the DNS enricher so the resolved server/client host
-		// names are already populated when src/dst site resolution runs. The IP
-		// registry is optional and only consulted when the order reaches it.
+		// names are already populated when src/dst site resolution runs. The
+		// hostname and IP registries are optional and only used when the
+		// order reaches them.
 		order := NormalizeSiteResolutionOrder(config.SiteResolutionOrder, config.Logger)
 		config.Logger.Infof("site: resolution order %s (local site %q)",
 			strings.Join(order, " -> "), config.SiteLocalSite)
 		c.registerEnricher(&siteRecordEnricher{
 			domains:             config.SiteRegistry,
+			overrides:           config.SiteOverrides,
+			ambig:               newAmbiguityReporter(config.Logger),
+			hosts:               config.SiteHostRegistry,
 			ips:                 config.SiteIPRegistry,
 			wlcgOnly:            c.matchesWLCG,
 			localSite:           config.SiteLocalSite,

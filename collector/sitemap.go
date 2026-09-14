@@ -34,11 +34,12 @@ var embeddedCRICDomains []byte
 // rate measurable end to end and are also exported via the
 // shoveler_site_unresolved metric (labelled by role and reason).
 const (
-	SiteStatusResolved       = "resolved"        // exactly one RCSite matched in the domains map
-	SiteStatusResolvedConfig = "resolved_config" // taken from the configured local site (site.local_site)
-	SiteStatusAmbiguous      = "ambiguous"       // matched >1 RCSite even after besttier=1; the site is a first-match guess
-	SiteStatusUnknown        = "unknown_domain"  // a host name was available but no domain suffix matched
-	SiteStatusNoHost         = "no_host"         // no usable host name (missing, still an IP literal, or DNS failed)
+	SiteStatusResolved         = "resolved"          // exactly one RCSite matched by domain suffix in the domains map
+	SiteStatusResolvedConfig   = "resolved_config"   // taken from the configured local site (site.local_site)
+	SiteStatusResolvedOverride = "resolved_override" // pinned by an operator entry in site.overrides
+	SiteStatusAmbiguous        = "ambiguous"         // matched >1 RCSite even after besttier=1; the site is a first-match guess
+	SiteStatusUnknown          = "unknown_domain"    // a host name was available but no domain suffix matched
+	SiteStatusNoHost           = "no_host"           // no usable host name (missing, still an IP literal, or DNS failed)
 )
 
 // The methods that can map one endpoint to an RCSite, named as they appear in
@@ -46,10 +47,18 @@ const (
 // wins, so the order is a statement of which identifier we trust most.
 const (
 	SiteMethodConfig   = "config"   // the site this collector runs at, from site.local_site
-	SiteMethodHostname = "hostname" // the full host name, as an exact key in the CRIC domains map
+	SiteMethodHostname = "hostname" // the full host name, as an exact CRIC SE protocol endpoint
 	SiteMethodIP       = "ip"       // the endpoint address, by CRIC netroutes CIDR containment
 	SiteMethodDomain   = "domain"   // the host name's longest matching domain suffix in the domains map
 )
+
+// SiteMethodOverride labels an endpoint settled by site.overrides. It is NOT a
+// resolution_order method: pins are not an inference to be ranked against the
+// others, so they cannot be ordered, left out of a custom order, or switched off
+// there. They are consulted before every CRIC lookup and win outright. The label
+// exists so pinned endpoints are visible in shoveler_site_resolved_by_method
+// alongside the rest.
+const SiteMethodOverride = "override"
 
 // DefaultSiteResolutionOrder is the order used when site.resolution_order is not
 // set: the operator's own declaration of where the collector runs first (nothing
@@ -184,21 +193,14 @@ func (r *SiteRegistry) Load(data []byte) error {
 // SiteStatusAmbiguous it is the first of the several sites CRIC lists for that
 // domain, which consumers must treat as a guess (see resolveHost).
 func (r *SiteRegistry) ResolveHost(host string) (site string, status string) {
-	return r.resolveHost(host, false)
-}
-
-// ResolveExactHost maps a host name to an RCSite only when the domains map lists
-// the full host name itself, i.e. the first step of the ResolveHost walk without
-// the broader suffixes. It is the "hostname" resolution method: CRIC records
-// storage endpoints such as "eosatlas.cern.ch" as their own key, and an exact hit
-// carries no risk of over-matching, so it can be trusted ahead of an IP range.
-func (r *SiteRegistry) ResolveExactHost(host string) (site string, status string) {
-	return r.resolveHost(host, true)
+	return r.resolveHost(host)
 }
 
 // resolveHost walks the host's suffixes from most to least specific, taking the
-// first hit; exactOnly stops after the full host name.
-func (r *SiteRegistry) resolveHost(host string, exactOnly bool) (site string, status string) {
+// first hit. The walk starts at the full host name, so an exact key in the
+// domains map is matched here too — the "hostname" method matches CRIC SE
+// endpoints instead (see HostSiteRegistry).
+func (r *SiteRegistry) resolveHost(host string) (site string, status string) {
 	h := normalizeHost(host)
 	if h == "" {
 		return "", SiteStatusNoHost
@@ -211,11 +213,7 @@ func (r *SiteRegistry) resolveHost(host string, exactOnly bool) (site string, st
 	// first hit -> the longest matching suffix. "n01.gla.scotgrid.ac.uk" matches
 	// "gla.scotgrid.ac.uk" before the broader (and ambiguous) "ac.uk".
 	labels := strings.Split(h, ".")
-	steps := len(labels) - 1
-	if exactOnly {
-		steps = 1
-	}
-	for i := 0; i < steps; i++ {
+	for i := 0; i < len(labels)-1; i++ {
 		suffix := strings.Join(labels[i:], ".")
 		sites, ok := r.domains[suffix]
 		// An empty site list is treated as no match at all, so the walk continues
@@ -238,6 +236,27 @@ func (r *SiteRegistry) resolveHost(host string, exactOnly bool) (site string, st
 		return sites[0], SiteStatusAmbiguous
 	}
 	return "", SiteStatusUnknown
+}
+
+// Candidates returns every RCSite the longest matching suffix lists for host, or
+// nil when nothing matches. It exists for reporting an ambiguous match: callers
+// resolving a site must use ResolveHost, which applies the status rules.
+func (r *SiteRegistry) Candidates(host string) []string {
+	h := normalizeHost(host)
+	if h == "" {
+		return nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	labels := strings.Split(h, ".")
+	for i := 0; i < len(labels)-1; i++ {
+		if sites, ok := r.domains[strings.Join(labels[i:], ".")]; ok && len(sites) > 0 {
+			return append([]string(nil), sites...)
+		}
+	}
+	return nil
 }
 
 // normalizeHost lowercases a host, strips a trailing dot, and returns "" for a
@@ -341,11 +360,18 @@ func (r *SiteRegistry) StartRefresh(ctx context.Context, src string, interval ti
 // run AFTER dnsRecordEnricher so the resolved host names are already populated.
 //
 // Each endpoint is resolved by trying the methods in order and taking the first
-// hit (see DefaultSiteResolutionOrder). ips is optional (nil drops the "ip"
-// method), and so is localSite (empty drops the "config" method).
+// hit (see DefaultSiteResolutionOrder). hosts is optional (nil drops the
+// "hostname" method), ips is optional (nil drops the "ip" method), and so is
+// localSite (empty drops the "config" method).
 type siteRecordEnricher struct {
-	domains *SiteRegistry
-	ips     *IPSiteRegistry
+	domains   *SiteRegistry
+	hosts     *HostSiteRegistry
+	ips       *IPSiteRegistry
+	overrides *SiteOverrides // operator pins from site.overrides; nil disables overriding
+
+	// ambig names ambiguous hosts in the log, once each, so they can be pinned.
+	// nil disables that reporting (the metric still counts them).
+	ambig *ambiguityReporter
 
 	// wlcgOnly gates the whole resolution. The resolved sites are emitted on the
 	// WLCG record only, so for a record that will not be converted the work — up
@@ -452,11 +478,19 @@ func (s *siteRecordEnricher) resolveEndpoint(ep siteEndpoint) siteResolution {
 		order = DefaultSiteResolutionOrder
 	}
 
+	// The operator's own answer comes first and wins outright: a pin corrects CRIC
+	// as well as settling something CRIC reports ambiguously. It is checked here
+	// rather than as a step in the order because it is not an inference to be
+	// ranked against the others — see SiteOverrides.
+	if site, ok := s.overrides.Resolve(ep); ok {
+		return siteResolution{site: site, status: SiteStatusResolvedOverride, method: SiteMethodOverride}
+	}
+
 	var failure siteResolution
 	for _, method := range order {
 		site, status := s.resolveBy(method, ep)
 		switch status {
-		case SiteStatusResolved, SiteStatusResolvedConfig, SiteStatusResolvedIP:
+		case SiteStatusResolved, SiteStatusResolvedConfig, SiteStatusResolvedOverride, SiteStatusResolvedHostname, SiteStatusResolvedIP:
 			return siteResolution{site: site, status: status, method: method}
 		default:
 			// Carries the site along with the reason, because an ambiguous match
@@ -467,6 +501,11 @@ func (s *siteRecordEnricher) resolveEndpoint(ep siteEndpoint) siteResolution {
 	}
 	if failure.status == "" {
 		failure.status = SiteStatusNoHost
+	}
+	// Nothing CRIC knows settled this endpoint, and no pin covered it. Name it once
+	// so the operator learns which key to add to site.overrides.
+	if failure.status == SiteStatusAmbiguous && s.ambig != nil {
+		s.ambig.report(ep, failure.site, s.ambiguousCandidates(ep))
 	}
 	return failure
 }
@@ -482,10 +521,10 @@ func (s *siteRecordEnricher) resolveBy(method string, ep siteEndpoint) (site str
 		}
 		return s.localSite, SiteStatusResolvedConfig
 	case SiteMethodHostname:
-		if s.domains == nil {
+		if s.hosts == nil {
 			return "", ""
 		}
-		return s.domains.ResolveExactHost(ep.host)
+		return s.hosts.ResolveHost(ep.host)
 	case SiteMethodIP:
 		if s.ips == nil || ep.ip == nil {
 			return "", ""
@@ -540,8 +579,9 @@ func recordSiteMetric(role string, res siteResolution) {
 		siteResolvedByMethod.WithLabelValues(role, res.method).Inc()
 	}
 	switch res.status {
-	case SiteStatusResolved, SiteStatusResolvedConfig:
-		// resolved by the operator's declaration or the domain map; not counted.
+	case SiteStatusResolved, SiteStatusResolvedConfig, SiteStatusResolvedOverride, SiteStatusResolvedHostname:
+		// resolved by the operator's declaration, an SE hostname, or the domain
+		// map; not counted here (siteResolvedByMethod already breaks these down).
 	case SiteStatusResolvedIP:
 		siteResolvedByIP.WithLabelValues(role).Inc()
 	default:
