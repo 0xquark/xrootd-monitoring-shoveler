@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -321,9 +322,51 @@ func buildIPSiteRegistry(ctx context.Context, config *shoveler.Config, logger *l
 	return registry
 }
 
+// warnInertNameMethods warns when site.resolution_order asks for name-based
+// resolution that cannot fire for the server endpoint. "hostname" and "domain"
+// both need a name, and the two endpoints differ in where a name comes from:
+// the client name arrives in the xrootd user record and is usable as-is, but the
+// server end is derived from the packet's RemoteAddr and is therefore always an
+// IP literal — DNS enrichment is the only thing that turns it into a name, and
+// the domain map deliberately refuses to match IP literals. With DNS off those
+// methods are silently inert for every server endpoint, and the resulting
+// no_host rate reads like poor CRIC coverage rather than a configuration gap.
+//
+// It stays quiet when "config" can already answer for the server end, which is
+// the recommended setup: every server reporting to this collector is at
+// site.local_site, so that method resolves the server end outright and the
+// name-based methods are never reached for it. Warning there would fire on a
+// correctly configured collector, which is how warnings get ignored.
+func warnInertNameMethods(config *shoveler.Config, logger *logrus.Logger) {
+	if !config.Site.Enabled || config.State.EnableDNSEnrichment {
+		return
+	}
+
+	var inert []string
+	var configMethod bool
+	for _, method := range config.Site.ResolutionOrder {
+		switch strings.ToLower(strings.TrimSpace(method)) {
+		case "hostname", "domain":
+			inert = append(inert, method)
+		case "config":
+			configMethod = true
+		}
+	}
+	if len(inert) == 0 || (configMethod && config.Site.LocalSite != "") {
+		return
+	}
+
+	logger.Warnf("site: resolution_order includes %q but state.enable_dns_enrichment is false, "+
+		"so the server endpoint stays an IP literal and those methods can only ever resolve the client end. "+
+		"Set site.local_site to resolve the server end without DNS, or enable state.enable_dns_enrichment.",
+		strings.Join(inert, ", "))
+}
+
 // buildCorrelatorConfig creates a correlator config from the main config
 func buildCorrelatorConfig(ctx context.Context, config *shoveler.Config, logger *logrus.Logger) collector.CorrelatorConfig {
 	ttl := time.Duration(config.State.EntryTTL) * time.Second
+
+	warnInertNameMethods(config, logger)
 
 	correlatorConfig := collector.CorrelatorConfig{
 		TTL:                 ttl,
