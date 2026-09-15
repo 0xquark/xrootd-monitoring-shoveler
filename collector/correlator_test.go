@@ -328,6 +328,7 @@ func TestCorrelator_UserRecord(t *testing.T) {
 			Hostname:     "client.example.com",
 			Org:          "ExampleOrg",
 			Role:         "production",
+			ExecName:     "root.exe",
 			InetVersion:  "4",
 		},
 	}
@@ -403,6 +404,8 @@ func TestCorrelator_UserRecord(t *testing.T) {
 	assert.Equal(t, "client.example.com", rec.Host)
 	assert.Equal(t, "xrootd", rec.Protocol)
 	assert.False(t, rec.IPv6)
+	assert.Equal(t, "root.exe", rec.ClientApp)
+	assert.Equal(t, "", rec.ClientInfo)
 }
 
 func TestCorrelator_UserRecordWithIPv6(t *testing.T) {

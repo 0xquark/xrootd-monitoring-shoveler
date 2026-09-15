@@ -39,6 +39,8 @@ type WLCGRecord struct {
 	SrcSiteStatus          string                 `json:"src_site_status,omitempty"`
 	DstSiteStatus          string                 `json:"dst_site_status,omitempty"`
 	UserProtocol           string                 `json:"user_protocol,omitempty"`
+	ClientApp              string                 `json:"client_app,omitempty"`
+	ClientInfo             string                 `json:"client_info,omitempty"`
 	VO                     string                 `json:"vo,omitempty"`
 	RecordVO               string                 `json:"record_vo,omitempty"`
 	VOSource               string                 `json:"vo_source,omitempty"`
@@ -252,6 +254,8 @@ func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata, scitags *ScitagsR
 		ExperimentID:           record.ExperimentID,
 		ActivityID:             record.ActivityID,
 		ScitagsVO:              scitagsVO,
+		ClientApp:              record.ClientApp,
+		ClientInfo:             record.ClientInfo,
 	}
 
 	// With wlcg.enabled, "vo" is found out from the record, scitags, and config in the order of vo_order. The
