@@ -719,3 +719,100 @@ func TestConvertGStreamToWLCG_CustomMetadata(t *testing.T) {
 		t.Errorf("tpc Type = %v, expected tpc (structural constant)", tm.Type)
 	}
 }
+
+// TestResolveIPVer pins the resolution order behind ipver: the client address
+// first, &I= only as a fallback, and no answer at all rather than a guess when
+// neither says anything. The IPv4-mapped case is the one that looks like a v6
+// client and is not.
+func TestResolveIPVer(t *testing.T) {
+	tests := []struct {
+		name        string
+		inetVersion string
+		host        string
+		want        string
+	}{
+		{"inet version 4, host is a name", "4", "client.example.com", ipVer4},
+		{"inet version 6, host is a name", "6", "client.example.com", ipVer6},
+		// xrootd sets &I= from the socket family, so a dual-stack listener
+		// reports 6 for an IPv4 peer. The address it also reported settles it.
+		{"dual-stack over-reports v6, dotted peer", "6", "192.168.1.10", ipVer4},
+		{"dual-stack over-reports v6, mapped peer", "6", "::ffff:192.168.1.10", ipVer4},
+		{"dual-stack over-reports v6, compat peer", "6", "::192.168.1.10", ipVer4},
+		{"genuine v6 peer keeps v6", "6", "2001:1458:d00:35::100:d4a", ipVer6},
+		// server_ip never enters into it: an IPv6 client is IPv6 whatever
+		// family the server's monitoring datagrams arrive over.
+		{"address wins over inet version", "4", "2001:1458:d00:35::100:d4a", ipVer6},
+		{"host v4 literal", "", "192.168.1.10", ipVer4},
+		{"host v6 literal", "", "2001:1458:d00:35::100:d4a", ipVer6},
+		{"host v6 literal bracketed", "", "[2001:1458:d00:35::100:d4a]", ipVer6},
+		{"host v4-mapped is v4", "", "::ffff:192.168.1.10", ipVer4},
+		{"host v6 literal with zone", "", "fe80::1%eth0", ipVer6},
+		{"host name with no inet version", "", "client.example.com", ""},
+		{"no user record at all", "", "", ""},
+		{"unknown host placeholder", "", "unknown", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			record := &CollectorRecord{Host: tt.host, clientInetVersion: tt.inetVersion}
+			if got := resolveIPVer(record); got != tt.want {
+				t.Errorf("resolveIPVer(inet=%q, host=%q) = %q, want %q", tt.inetVersion, tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestConvertToWLCGIPVer checks the field actually reaches the emitted record,
+// and that server_ip has no say in it: an IPv6 monitoring path carrying an IPv4
+// client's records must still report "4".
+func TestConvertToWLCGIPVer(t *testing.T) {
+	record := &CollectorRecord{
+		Timestamp:         time.Now(),
+		Host:              "client.example.com",
+		ServerIP:          "2001:1458:d00:35::100:d4a",
+		Filename:          "/store/data/file.root",
+		clientInetVersion: "4",
+	}
+
+	wlcg, err := ConvertToWLCG(record, WLCGMetadata{}, nil)
+	if err != nil {
+		t.Fatalf("ConvertToWLCG returned error: %v", err)
+	}
+
+	if wlcg.IPVer != ipVer4 {
+		t.Errorf("IPVer = %v, expected %v", wlcg.IPVer, ipVer4)
+	}
+
+	jsonBytes, err := wlcg.ToJSON()
+	if err != nil {
+		t.Fatalf("ToJSON returned error: %v", err)
+	}
+	if !strings.Contains(string(jsonBytes), `"ipver":"ipv4"`) {
+		t.Errorf("emitted record is missing ipver: %s", jsonBytes)
+	}
+}
+
+// TestConvertToWLCGIPv6StaysRaw pins the deliberate divergence: on a dual-stack
+// server reporting I=6 for a dotted IPv4 peer, ipver corrects to "ipv4" while the
+// ipv6 boolean keeps xrootd's own answer.
+func TestConvertToWLCGIPv6StaysRaw(t *testing.T) {
+	record := &CollectorRecord{
+		Timestamp:         time.Now(),
+		Host:              "192.168.1.10",
+		Filename:          "/store/data/file.root",
+		IPv6:              true, // as xrootd reported it, from &I=6
+		clientInetVersion: "6",
+	}
+
+	wlcg, err := ConvertToWLCG(record, WLCGMetadata{}, nil)
+	if err != nil {
+		t.Fatalf("ConvertToWLCG returned error: %v", err)
+	}
+
+	if wlcg.IPVer != ipVer4 {
+		t.Errorf("IPVer = %v, expected %v", wlcg.IPVer, ipVer4)
+	}
+	if !wlcg.IPv6 {
+		t.Error("IPv6 = false, expected xrootd's raw true to be passed through")
+	}
+}

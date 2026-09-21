@@ -161,6 +161,15 @@ type CollectorRecord struct {
 	// for. The traffic classifier needs the difference: a hex fallback for a low
 	// user id looks exactly like a numeric job-agent account.
 	userInfoKnown bool `json:"-"`
+
+	// clientInetVersion is the raw "4"/"6" of the user record's &I=: the address
+	// family the reporting server saw the client connect over. It is the only
+	// authoritative statement about a transfer's IP version, since a connection
+	// has exactly one family and server_ip cannot stand in for it: that address
+	// is the monitoring UDP path to this collector, not the transfer.
+	//
+	// Empty when no user record was correlated
+	clientInetVersion string `json:"-"`
 }
 
 // routingVO is the VO every rule matches on: the resolved one once the
@@ -1369,6 +1378,7 @@ func (c *Correlator) createCorrelatedRecord(state *FileState, rec parser.FileClo
 	clientApp := ""
 	clientInfo := ""
 	ipv6 := false
+	clientInetVersion := ""
 	tokenSubject := ""
 	tokenUsername := ""
 	tokenOrg := ""
@@ -1441,6 +1451,7 @@ func (c *Correlator) createCorrelatedRecord(state *FileState, rec parser.FileClo
 		clientInfo = userInfo.AuthInfo.MonInfo
 
 		// Check if IPv6
+		clientInetVersion = userInfo.AuthInfo.InetVersion
 		if userInfo.AuthInfo.InetVersion == "6" {
 			ipv6 = true
 		}
@@ -1541,6 +1552,7 @@ func (c *Correlator) createCorrelatedRecord(state *FileState, rec parser.FileClo
 		ClientApp:              clientApp,
 		ClientInfo:             clientInfo,
 		IPv6:                   ipv6,
+		clientInetVersion:      clientInetVersion,
 		Filesize:               state.FileSize,
 		ReadOperations:         rec.Ops.Read,
 		ReadSingleOperations:   rec.Ops.Read,
