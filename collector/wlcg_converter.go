@@ -30,7 +30,7 @@ type WLCGRecord struct {
 	ReadSingleBytes        int64                  `json:"read_single_bytes"`
 	ReadVectorBytes        int64                  `json:"read_vector_bytes"`
 	IPv6                   bool                   `json:"ipv6"`
-	IPVer                  string                 `json:"ipver,omitempty"`
+	IPVer                  string                 `json:"ipver"`
 	StartTime              int64                  `json:"start_time"`
 	EndTime                int64                  `json:"end_time"`
 	OperationTime          int64                  `json:"operation_time"`
@@ -98,7 +98,13 @@ type WLCGRecord struct {
 	// operation itself (replication, a system or job-agent account) rather than
 	// an end user. It is a pointer only so the field is absent, rather than a
 	// meaningless false, on records nothing classified.
+	//
+	// RemoteAccess is the inverse of SiteInternalTraffic: true for WAN, false
+	// for LAN, absent when nothing resolved, and is kept for consistency with
+	// the FTS schema, which names the same question that way. XRootD-internal
+	// traffic is not subtracted from it.
 	SiteInternalTraffic   *bool  `json:"site_internal_traffic,omitempty"`
+	RemoteAccess          *bool  `json:"remote_access,omitempty"`
 	TrafficScope          string `json:"traffic_scope,omitempty"`
 	XRootDInternalTraffic *bool  `json:"xrootd_internal_traffic,omitempty"`
 }
@@ -161,8 +167,9 @@ func deriveOperation(record *CollectorRecord) string {
 
 // IP version values published as ipver.
 const (
-	ipVer4 = "ipv4"
-	ipVer6 = "ipv6"
+	ipVer4       = "ipv4"
+	ipVer6       = "ipv6"
+	ipVerUnknown = "unknown"
 )
 
 // resolveIPVer works out the address family the client actually reached the
@@ -202,7 +209,7 @@ func resolveIPVer(record *CollectorRecord) string {
 		return ipVer6
 	}
 
-	return ""
+	return ipVerUnknown
 }
 
 // ipVerFromAddress reports the family of host when the server gave an address
@@ -350,6 +357,7 @@ func ConvertToWLCG(record *CollectorRecord, meta WLCGMetadata, scitags *ScitagsR
 	if record.trafficScope != "" {
 		wlcg.TrafficScope = record.trafficScope
 		wlcg.SiteInternalTraffic = siteInternalFromScope(record.trafficScope)
+		wlcg.RemoteAccess = remoteAccessFromScope(record.trafficScope)
 		xrootdInternal := record.xrootdInternal
 		wlcg.XRootDInternalTraffic = &xrootdInternal
 	}

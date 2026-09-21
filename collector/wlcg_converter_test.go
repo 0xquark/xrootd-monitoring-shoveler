@@ -721,7 +721,7 @@ func TestConvertGStreamToWLCG_CustomMetadata(t *testing.T) {
 }
 
 // TestResolveIPVer pins the resolution order behind ipver: the client address
-// first, &I= only as a fallback, and no answer at all rather than a guess when
+// first, &I= only as a fallback, and "unknown" rather than a guess when
 // neither says anything. The IPv4-mapped case is the one that looks like a v6
 // client and is not.
 func TestResolveIPVer(t *testing.T) {
@@ -747,9 +747,9 @@ func TestResolveIPVer(t *testing.T) {
 		{"host v6 literal bracketed", "", "[2001:1458:d00:35::100:d4a]", ipVer6},
 		{"host v4-mapped is v4", "", "::ffff:192.168.1.10", ipVer4},
 		{"host v6 literal with zone", "", "fe80::1%eth0", ipVer6},
-		{"host name with no inet version", "", "client.example.com", ""},
-		{"no user record at all", "", "", ""},
-		{"unknown host placeholder", "", "unknown", ""},
+		{"host name with no inet version", "", "client.example.com", ipVerUnknown},
+		{"no user record at all", "", "", ipVerUnknown},
+		{"unknown host placeholder", "", "unknown", ipVerUnknown},
 	}
 
 	for _, tt := range tests {
