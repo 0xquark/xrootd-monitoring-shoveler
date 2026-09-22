@@ -2,7 +2,6 @@ package collector
 
 import (
 	"encoding/json"
-	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -172,36 +171,20 @@ const (
 	ipVerUnknown = "unknown"
 )
 
-// resolveIPVer works out the address family the client actually reached the
-// reporting server over. Only ipver is resolved this way: the neighbouring
-// ipv6 boolean stays exactly as xrootd reported it, so the two can disagree on
-// a dual-stack server's IPv4 client, so ipv6 true beside ipver "ipv4". That is
-// deliberate, and the raw flag is left alone for consumers that already read
-// it.
+// resolveIPVer maps the address family xrootd reported onto the FTS schema's
+// string: "ipv4", "ipv6", or "unknown".
 //
-// The client's own address is trusted ahead of &I=, because &I= over-reports
-// v6: xrootd sets it from the socket's family, and a dual-stack server listens
-// on an AF_INET6 socket for both families. An IPv4 client arriving there is the
-// IPv4-mapped ::ffff:a.b.c.d, so the record says I=6 for traffic that is IPv4
-// on the wire. Formatted, that peer is usually the plain dotted address, and
-// either spelling resolves to "ipv4" here — To4 unmaps the mapped form, and
-// extractIPFromHost the ::a.b.c.d one. This is the only direction the two
-// disagree in: nothing makes a genuine IPv6 peer look IPv4.
+// The only input is &I= on the login record, used as xrootd sent it. The ipv6
+// boolean is built from the same field, so the two never disagree. What ipver
+// adds is a third state: a missing &I= is "unknown", not a default to either
+// family. The boolean cannot make that distinction — ipv6 false covers both
+// "xrootd said 4" and "xrootd said nothing".
 //
-// A server that reports the client by name leaves &I= as the only answer, so it
-// is still used, and a name the client end could not be resolved to keeps the
-// over-reported v6 — a resolved address is the only thing that can correct it.
-//
-// server_ip has no say. It is the source address of the monitoring datagram
-// this collector received (see canonicalServerIP), i.e. the server-to-collector
-// path, and says nothing about the transfer: a dual-stack server holds both
-// families at once, so an IPv6 client reaching a server whose monitoring
-// arrives over IPv4 is still an IPv6 transfer.
+// No other address is used to fill a gap. The client host is ignored even when
+// it is a literal IP, and so is server_ip: that is the source of the monitoring
+// datagram this collector received (see canonicalServerIP), which is the
+// server-to-collector path and says nothing about the transfer.
 func resolveIPVer(record *CollectorRecord) string {
-	if v := ipVerFromAddress(record.Host); v != "" {
-		return v
-	}
-
 	switch strings.TrimSpace(record.clientInetVersion) {
 	case "4":
 		return ipVer4
@@ -210,25 +193,6 @@ func resolveIPVer(record *CollectorRecord) string {
 	}
 
 	return ipVerUnknown
-}
-
-// ipVerFromAddress reports the family of host when the server gave an address
-// rather than a name, and "" when it is a name, a placeholder or empty. The
-// IPv4-mapped and IPv4-compatible forms both come back as "ipv4": they are how a
-// dual-stack listener spells an IPv4 peer, not IPv6 traffic.
-func ipVerFromAddress(host string) string {
-	if host == "" || !isIPPattern(host) {
-		return ""
-	}
-
-	ip := net.ParseIP(extractIPFromHost(host))
-	if ip == nil {
-		return ""
-	}
-	if ip.To4() != nil {
-		return ipVer4
-	}
-	return ipVer6
 }
 
 // ConvertToWLCG converts a CollectorRecord to WLCG format
