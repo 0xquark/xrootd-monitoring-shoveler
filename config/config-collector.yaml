@@ -18,10 +18,28 @@ input:
 
 # State management (collector mode only)
 state:
-  # Time-to-live for state entries in seconds (5 minutes default)
+  # Lifetime of the 'd' (path) and 'i' (app info) dictionary records, in
+  # seconds. They are only needed until the file open that uses them.
   entry_ttl: 300
-  # Maximum number of state entries (0 for unlimited)
-  max_entries: 10000
+  # The rest of the state ends with what it describes, not on a timer from
+  # when it was written
+  # user_ttl: 300        # keep a session this long after its disconnect, for late (out of order) closes
+  #                      # (cannot be turned off: 0 or negative means the default: 300)
+  # user_idle_ttl: 86400 # drop a session with no disconnect, no activity and no open files (<0: never) - 1 day
+  # file_ttl: 604800     # drop an open file not heard of this long (its close was lost): - 7 days
+  #                      # silence on servers that send XFR records ("xfr" on
+  #                      # xrootd.monitor), else the open's age. <0 = off.
+  #                      # With max_memory set: 7200, and only on servers that send XFR
+  # server_ttl: 172800   # drop a server incarnation, and all it owns, after this long silent - 2 days
+  # Memory: the correlation state (open files, sessions, dictionary records)
+  # is bounded by evicting the least recently used entries first.
+  # max_memory: 4G       # cap on the process's memory (K/M/G/T; 0 = unbounded).
+  #                      # Best effort: set any cgroup MemoryMax= above it, never at it.
+  #
+  # Maximum number of correlation entries (0 = no limit). When full, the least
+  # recently used entry is removed. If you set it, allow for all concurrent
+  # sessions and open files; otherwise leave it at 0 and use max_memory.
+  max_entries: 0
   # DNS enrichment settings (replaces reverse DNS lookup)
   # enable_dns_enrichment: false
   # dns_cache_ttl: 3600       # Time-to-live for DNS cache entries in seconds

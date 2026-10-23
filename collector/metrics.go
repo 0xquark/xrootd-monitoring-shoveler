@@ -185,3 +185,97 @@ var (
 		Help: "Total number of file time (TOD) records received in f-stream and t-stream packets per upstream server IP (opt-in: metrics.per_server)",
 	}, []string{"server_ip"})
 )
+
+// Correlation state lifecycle. These say how entries leave the state other
+// than by being used: the session and open-file lifetimes and the server
+// reaping that replaced the single entry TTL.
+var (
+	// expiredUsersTotal counts sessions removed from the state, by reason:
+	// "disconnected" is the grace period after a reported disconnect running
+	// out (the mechanism working); "idle" is a session with no disconnect
+	// that went quiet for state.user_idle_ttl. A climbing "idle" with live
+	// sessions behind it means user_idle_ttl is too short.
+	expiredUsersTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_expired_users_total",
+		Help: "Total number of client sessions removed from the correlation state, by reason (disconnected, idle)",
+	}, []string{"reason"})
+
+	// staleOpensTotal counts open files dropped without their close, by how
+	// that was found out: "disconnect" (still open when the session ended) or
+	// "file_ttl" (not heard of for state.file_ttl: silent, on a server that
+	// sends XFR; that old, elsewhere).
+	staleOpensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "shoveler_stale_opens_total",
+		Help: "Total number of open files dropped from the correlation state without a close, by reason (disconnect, file_ttl)",
+	}, []string{"reason"})
+
+	// reapedServersTotal counts server incarnations dropped after
+	// state.server_ttl of silence, with everything they owned.
+	reapedServersTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_reaped_servers_total",
+		Help: "Total number of server incarnations dropped from the correlation state after state.server_ttl without a packet",
+	})
+
+	// fileXFRRecordsTotal counts in-flight XFR records. Zero means no server
+	// reporting here has "xfr" on its xrootd.monitor line, and state.file_ttl
+	// then counts from each open (with state.max_memory set, it has no effect).
+	fileXFRRecordsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_file_xfr_records_total",
+		Help: "Total number of in-flight XFR records received in f-stream packets",
+	})
+
+	// fileDisconnectRecordsTotal counts session disconnect records, which start
+	// a session's grace period.
+	fileDisconnectRecordsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_file_disconnect_records_total",
+		Help: "Total number of session disconnect records received in f-stream packets",
+	})
+)
+
+// Correlation state memory bound (state.max_memory, state.max_entries).
+var (
+	// stateEvictedTotal counts entries evicted, least recently used first,
+	// because the state was over its byte budget or its entry cap. Evicted
+	// entries are lost correlation: a steady rate means the budget is binding.
+	stateEvictedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_state_evicted_total",
+		Help: "Total number of correlation entries evicted (least recently used first) to stay within state.max_memory or state.max_entries",
+	})
+
+	// stateEvictPinnedTotal counts how often eviction passed over an entry
+	// it may not evict: a session with files open, or its dictid entry.
+	stateEvictPinnedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_state_evict_pinned_total",
+		Help: "Total number of times LRU eviction passed over an entry of a session that has files open (its session or dictid entry)",
+	})
+
+	// stateEntries is the number of entries in the correlation maps (open
+	// files, sessions, dictionary records) under the LRU bound.
+	stateEntries = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "shoveler_state_entries",
+		Help: "Current number of correlation entries (open files, sessions, dictionary records)",
+	})
+
+	// stateBudgetUtilization is how full the state's byte budget is, 0 to 1;
+	// 0 when unbounded. A ratio on purpose: the charged bytes behind it are an
+	// estimate, and must not be read as the process's memory.
+	stateBudgetUtilization = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "shoveler_state_budget_utilization",
+		Help: "Fraction of the correlation state's byte budget in use (0 when state.max_memory is off)",
+	})
+
+	// stateMaxMemoryBytes publishes state.max_memory, so a dashboard can draw
+	// the cap next to the process memory it bounds.
+	stateMaxMemoryBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "shoveler_state_max_memory_bytes",
+		Help: "The state.max_memory process memory cap in force (0 = unbounded)",
+	})
+
+	// stateMemoryFlooredTotal counts control ticks spent over state.max_memory
+	// with the state budget already at its floor and nothing left to evict:
+	// the memory is somewhere other than the correlation state.
+	stateMemoryFlooredTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "shoveler_state_memory_floored_total",
+		Help: "Total number of memory control ticks over state.max_memory with the correlation state already at its floor",
+	})
+)
