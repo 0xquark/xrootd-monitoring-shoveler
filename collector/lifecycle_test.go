@@ -75,15 +75,6 @@ func lcEAInfo(udid uint32) *parser.Packet {
 	}
 }
 
-// lcOpenFile is snapOpen(true) of another file.
-func lcOpenFile(id uint32) *parser.Packet {
-	p := snapOpen(true)
-	o := p.FileRecords[1].(parser.FileOpenRecord)
-	o.Header.FileId = id
-	p.FileRecords[1] = o
-	return p
-}
-
 // A transfer longer than state.entry_ttl keeps its open entry, its path and
 // its client: before, all three had aged out and the close was emitted as a
 // standalone record with filename and host "unknown".
